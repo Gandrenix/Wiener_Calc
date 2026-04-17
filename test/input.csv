@@ -1,4 +1,0 @@
-person_id,food_id,amount_grams,prep_method
-P001,101,200,raw
-P002,102,300,boil
-P002,103,15,raw
