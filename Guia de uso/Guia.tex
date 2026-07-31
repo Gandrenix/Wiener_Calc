@@ -1,0 +1,340 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage[margin=2cm]{geometry}
+\usepackage{graphicx}
+\usepackage[table,svgnames]{xcolor}
+\usepackage[many]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, shadows, calc}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{enumitem}
+
+\setlength{\headheight}{14pt}
+
+% --- PALETA FRUTIGER AERO / XBOX 360 / GLASSMORPHISM ---
+\definecolor{aerocyan}{RGB}{170, 220, 245}
+\definecolor{aeromint}{RGB}{168, 230, 207}
+\definecolor{aeropastelgreen}{RGB}{205, 245, 220}
+\definecolor{aeroemerald}{RGB}{16, 172, 132}
+\definecolor{aerolavender}{RGB}{225, 205, 245}
+\definecolor{aerodark}{RGB}{35, 48, 60}
+\definecolor{glassbg}{RGB}{247, 252, 255}
+\definecolor{glassborder}{RGB}{185, 225, 245}
+\definecolor{softpeach}{RGB}{255, 230, 220}
+
+% --- ESTILO DE PÁGINA ---
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\textcolor{aeroemerald}{\small\textbf{WienerCalc} --- Guía Oficial}}
+\lhead{\textcolor{aerodark}{\small\textsf{WienerHoundStudios}}}
+\rfoot{\textcolor{gray}{\small Página \thepage}}
+\lfoot{\textcolor{gray}{\small Análisis Nutricional Universal}}
+\renewcommand{\headrulewidth}{0.5pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% --- FORMATO DE TÍTULOS ---
+\titleformat{\section}
+  {\color{aeroemerald}\normalfont\LARGE\bfseries}
+  {\thesection}{1em}{}
+  [\color{aerocyan}\rule{\linewidth}{1.5pt}]
+
+\titleformat{\subsection}
+  {\color{aerodark}\normalfont\Large\bfseries}
+  {\thesubsection}{1em}{}
+
+% --- CAJAS ESTILO GLASSMORPHISM (TCOLORBOX) ---
+\newtcolorbox{glassbox}[1][]{
+  enhanced,
+  colback=glassbg,
+  colframe=glassborder,
+  arc=8pt,
+  boxrule=1.2pt,
+  shadow={2pt}{-2pt}{0pt}{black!12},
+  fonttitle=\bfseries\color{aerodark},
+  coltitle=aerodark,
+  colbacktitle=aerocyan!40,
+  title={#1},
+  top=10pt,bottom=10pt,left=10pt,right=10pt
+}
+
+\newtcolorbox{tipbox}[1][]{
+  enhanced,
+  colback=aeropastelgreen!30,
+  colframe=aeroemerald,
+  arc=6pt,
+  boxrule=1.5pt,
+  leftrule=6pt,
+  fonttitle=\bfseries\color{aeroemerald},
+  title={CONSEJO: #1},
+  top=8pt,bottom=8pt,left=10pt,right=10pt
+}
+
+\newtcolorbox{warningbox}[1][]{
+  enhanced,
+  colback=softpeach!40,
+  colframe=OrangeRed!80,
+  arc=6pt,
+  boxrule=1.5pt,
+  leftrule=6pt,
+  fonttitle=\bfseries\color{OrangeRed},
+  title={ATENCIÓN: #1},
+  top=8pt,bottom=8pt,left=10pt,right=10pt
+}
+
+\newtcolorbox{stepcard}[2][]{
+  enhanced,
+  colback=glassbg,
+  colframe=aeromint,
+  arc=8pt,
+  boxrule=1.5pt,
+  shadow={3pt}{-3pt}{0pt}{black!8},
+  fonttitle=\bfseries\color{aerodark},
+  colbacktitle=aeromint!50,
+  title={#2},
+  #1
+}
+
+\begin{document}
+
+% ================= BANNER PRINCIPAL DE TÍTULO (FRUTIGER AERO VIBES) =================
+\begin{center}
+\begin{tikzpicture}
+  \node[
+    draw=glassborder,
+    fill=glassbg,
+    rounded corners=14pt,
+    inner sep=14pt,
+    line width=1.5pt,
+    drop shadow={opacity=0.15, shadow xshift=3pt, shadow yshift=-3pt}
+  ] (banner) {
+    \begin{minipage}{0.94\textwidth}
+      \begin{minipage}{\linewidth}
+        \centering
+        \includegraphics[height=2.2cm]{images/logo.png} \\[6pt]
+        {\Huge \bfseries \color{aeroemerald} WienerCalc} \\[4pt]
+        {\large \bfseries \color{aerodark} Guía Oficial de Usuario} \\[2pt]
+        {\small \color{gray} El motor universal para el análisis nutricional y evaluación de la ingesta} \\[6pt]
+        \begin{tikzpicture}
+          \shade[left color=aerocyan, right color=aeromint] (0,0) rectangle (12,0.08);
+        \end{tikzpicture}
+      \end{minipage}
+    \end{minipage}
+
+  };
+\end{tikzpicture}
+\end{center}
+
+\vspace{0.3cm}
+
+\begin{glassbox}[Bienvenido a WienerCalc]
+Bienvenido a la guía de usuario de \textbf{WienerCalc}, el software profesional desarrollado por \textbf{WienerHoundStudios} para nutricionistas, epidemiólogos, investigadores, clínicas y universidades. 
+
+WienerCalc traduce y moderniza la potencia del histórico algoritmo científico \textit{FoodCalc} en una interfaz gráfica rápida y elegante. Está diseñado para procesar desde pequeñas consultas nutricionales hasta masivas encuestas de salud poblacional con miles de pacientes.
+\end{glassbox}
+
+\vspace{0.4cm}
+
+
+\vspace{0.4cm}
+
+% ================= SECCIÓN 1 =================
+\section{Introducción y Filosofía del Software}
+
+\textbf{WienerCalc} es una plataforma de procesamiento nutricional diseñada bajo una \textbf{arquitectura abierta y libre de restricciones}. 
+
+A diferencia de los programas tradicionales que encierran al usuario en bases de datos propietarias o fórmulas rígidas, WienerCalc se fundamenta en la \textbf{autonomía de los datos}:
+\begin{itemize}[label=\textcolor{aeroemerald}{$\bullet$}]
+    \item \textbf{Sin bloqueos de formato:} Trabaja directamente con tus propios archivos CSV de cualquier fuente o país.
+    \item \textbf{Sin límites de columnas:} Soporta esquemas nutricionales de cualquier extensión o nivel de detalle.
+    \item \textbf{Fórmulas dinámicas:} Permite definir reglas matemáticas personalizadas sin modificar el núcleo de la aplicación.
+\end{itemize}
+
+\vspace{0.4cm}
+
+% ================= SECCIÓN 2 =================
+\section{Alcance Real y Capacidades del Sistema}
+
+WienerCalc es un procesador nutricional de alcance universal diseñado para adaptarse a cualquier flujo de trabajo:
+
+\begin{glassbox}[1. Compatibilidad Universal con Tablas Nutricionales]
+Funciona con cualquier tabla nacional o internacional existente (USDA, REDCA, TCAC, EuroFIR, Souci-Fachmann-Kraut, INCAP, LATINFOODS, \texttt{tpaisa.csv}, o tablas personalizadas).
+\begin{itemize}[label=\textcolor{aeroemerald}{$\checkmark$}]
+    \item \textbf{Nutrientes ilimitados:} Procesa simultáneamente calorías, macronutrientes, micronutrientes (vitaminas y minerales), ácidos grasos (saturados, mono y poliinsaturados), aminoácidos, fracciones de fibra (cruda, dietética, soluble, insoluble), cenizas, contenido de agua, índice glucémico, carga glucémica, etc.
+\end{itemize}
+\end{glassbox}
+
+\vspace{0.3cm}
+
+\begin{glassbox}[2. Motor Matemático de Fórmulas Personalizadas]
+Te permite escribir \textbf{cualquier fórmula matemática} que requiera tu investigación usando cualquier combinación de columnas y unidades:
+\begin{itemize}[label=\textcolor{aeroemerald}{$\checkmark$}]
+    \item Cálculo de Energía en Kilocalorías ($\text{kcal}$) o Kilojulios ($\text{kJ}$).
+    \item Porcentajes de distribución de macronutrientes (\% de calorías provenientes de grasas, proteínas o carbohidratos).
+    \item Conversiones compuestas de Vitamina A (Retinol, Betacarotenos, UI, ER, RAE).
+    \item Relaciones sodio/potasio, ratios de ácidos grasos (Omega-3/Omega-6), densidad de nutrientes por 1000 kcal, etc.
+\end{itemize}
+\end{glassbox}
+
+\vspace{0.3cm}
+
+\begin{glassbox}[3. Descomposición de Recetas y Ajustes por Cocción]
+\begin{itemize}[label=\textcolor{aeroemerald}{$\checkmark$}]
+    \item \textbf{Platos y recetas preparadas:} Fusiona tablas secundarias de preparaciones pre-calculadas (\texttt{trecetas.csv}).
+    \item \textbf{Descomposición por ingredientes:} Escala lotes enteros de recetas (\texttt{ejemreceta.csv}) recalculando proporcionalmente cada ingrediente.
+    \item \textbf{Factores de Cocción y Desecho:} Aplica porcentajes de pérdida nutricional según el método de preparación (hervido, frito, horneado) y deduce partes no comestibles (cáscaras, semillas, huesos).
+\end{itemize}
+\end{glassbox}
+
+\vspace{0.5cm}
+
+% ================= SECCIÓN 3 =================
+\section{Los 3 Archivos de Datos (Flexibilidad de Formato)}
+
+WienerCalc utiliza archivos en formato estándar \textbf{CSV} (compatibles con Excel):
+
+\begin{description}[font=\color{aeroemerald}\bfseries]
+    \item[1. Tabla de Alimentos (Nutrientes) --- \textit{Obligatorio}] Tu base de datos nutricional de referencia con aportes expresados por cada \textbf{100 gramos}.
+    \item[2. Cantidades Consumidas (Entrada / Ingesta) --- \textit{Obligatorio}] El registro o encuesta alimentaria con lo consumido por los pacientes (códigos de alimentos, cantidades y métodos de cocción).
+    \item[3. Diccionario o Tabla de Recetas --- \textit{Opcional}] La lista de recetas compuestas o tabla de preparaciones secundarias que deseas integrar.
+\end{description}
+
+\vspace{0.5cm}
+
+% ================= SECCIÓN 4 =================
+\section{Guía Paso a Paso por Pestañas}
+
+El flujo de trabajo en WienerCalc está organizado en \textbf{4 Pestañas Secuenciales}:
+
+
+\vspace{0.4cm}
+
+\begin{stepcard}{Pestaña 1: Fuentes de Datos (Cargar CSVs)}
+\begin{enumerate}[leftmargin=*]
+    \item Haz clic en la primera caja morada \textbf{"Tabla de Alimentos (Nutrientes)"} para seleccionar tu base de datos (ej. \texttt{tpaisa.csv} o \texttt{foods.csv}).
+    \item Haz clic en la segunda caja \textbf{"Cantidades Consumidas (Entrada)"} y selecciona tu archivo de ingesta (ej. \texttt{ejemingre.csv} u \texttt{input.csv}).
+    \item \textit{(Opcional)} Si utilizas recetas compuestas, haz clic en la tercera caja \textbf{"Tabla de Recetas"} (ej. \texttt{trecetas.csv} o \texttt{ejemreceta.csv}).
+\end{enumerate}
+\end{stepcard}
+
+\vspace{0.4cm}
+
+\begin{stepcard}{Pestaña 2: Mapeo de Campos, Agrupación y Alias}
+En esta pestaña defines la estructura de tus datos:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Columna ID (Tabla Alimentos):} Selecciona el código de alimento (ej. \texttt{codalim} o \texttt{food\_id}).
+    \item \textbf{Columna ID (Consumo Entrada):} Selecciona el código en la tabla de ingesta (ej. \texttt{codalim} u \texttt{input\_id}).
+    \item \textbf{Nombre de Columna de Cantidad:} Selecciona la columna de peso (ej. \texttt{cantidad} u \texttt{amount\_grams}).
+    \item \textbf{Escala de Entrada (Multiplicador):} 
+    Escribe \textbf{\texttt{0.01}} si tus datos de consumo están en \textbf{gramos} ($150\,\text{g} \times 0.01 = 1.5\,\text{porciones de 100g}$).
+    \item \textbf{Agrupar Resultados Por (Opcional):} Selecciona la columna del paciente (ej. \texttt{id} o \texttt{person\_id}) para sumar todo lo consumido por el sujeto y entregar \textbf{una sola fila por persona}.
+\end{enumerate}
+
+\begin{glassbox}[Alias de Columnas (Unir Recetas y Alimentos)]
+Si tu tabla de recetas utiliza nombres de columnas distintos a la tabla principal, empareja los campos usando el botón \textbf{"+ Añadir Alias"}:
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Col. Recetas (\texttt{trecetas.csv})} & \textbf{Col. Alimentos (\texttt{tpaisa.csv})} \\
+\midrule
+\texttt{cod\_b} & \texttt{codalim} \\
+\texttt{Kcal} & \texttt{kcal} \\
+\texttt{Pro. g.} & \texttt{proteina\_g} \\
+\texttt{GT. g.} & \texttt{grasatot\_g} \\
+\texttt{CHO. g.} & \texttt{Carboh\_g} \\
+\texttt{VA (UI)} & \texttt{vitaA(UI)} \\
+\texttt{VA (ER)} & \texttt{vitaA(ER)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{glassbox}
+\end{stepcard}
+
+\vspace{0.4cm}
+
+\begin{stepcard}{Pestaña 3: Reglas Matemáticas e Impacto de Cocción}
+\textbf{1. Reglas Matemáticas Personalizadas:} Haz clic en \textbf{"+ Añadir Regla"} para definir fórmulas:
+\begin{itemize}
+    \item \textbf{Calorías de Grasas:} Campo: \texttt{cal\_from\_fat} $\rightarrow$ Fórmula: \texttt{grasatot\_g * 9}
+    \item \textbf{Suma de Vitamina A:} Campo: \texttt{vitA\_sum} $\rightarrow$ Fórmula: \texttt{vitaA(UI) + vitaA(ER)}
+    \item \textbf{Energía en Kilojulios (kJ):} Campo: \texttt{energia\_kJ} $\rightarrow$ Fórmula: \texttt{17 * proteina\_g + 38 * grasatot\_g + 17 * Carboh\_g}
+
+\end{itemize}
+
+\vspace{0.2cm}
+\textbf{2. Reducciones por Cocción:} Haz clic en \textbf{"+ Añadir Regla de Cocción"}:
+\begin{itemize}
+    \item \textbf{Método:} \texttt{boil} (hervido) | \textbf{Campo Reducción:} \texttt{boil\_loss} | \textbf{Nutriente:} \texttt{vitaC}
+\end{itemize}
+\end{stepcard}
+
+\vspace{0.4cm}
+
+\begin{stepcard}{Pestaña 4: Calcular, Vista Previa y Exportación}
+\begin{enumerate}[leftmargin=*]
+    \item Haz clic en el botón \textbf{"Ejecutar Cálculo"} (Run Calculation).
+    \item Revisa la \textbf{Vista Previa de Resultados} en pantalla con desplazamiento horizontal.
+    \item Exporta tu trabajo:
+    \begin{itemize}[label=\textcolor{aeroemerald}{$\rightarrow$}]
+        \item \textbf{Exportar a Excel (.xlsx):} Genera un libro formateado listo para presentaciones.
+        \item \textbf{Exportar a CSV:} Descarga un archivo compatible con SPSS, R, Stata, SAS o Python.
+    \end{itemize}
+\end{enumerate}
+\end{stepcard}
+
+\vspace{0.5cm}
+
+% ================= SECCIÓN 5 =================
+\section{Gestión de Perfiles Reutilizables (.json)}
+
+Para investigaciones continuas o consultas clínicas diarias:
+\begin{itemize}[label=\textcolor{aeroemerald}{$\bullet$}]
+    \item \textbf{Guardar Perfil (Save Config):} Descarga un archivo \texttt{.json} con todo tu mapeo, alias y fórmulas creadas.
+    \item \textbf{Cargar Perfil (Load Config):} Restaura al instante toda tu configuración guardada con un solo clic.
+\end{itemize}
+
+\vspace{0.5cm}
+
+% ================= SECCIÓN 6 =================
+\section{Editor de CSV / Terminal Integrado}
+
+WienerCalc incluye un \textbf{Editor e Inspector de CSV en vivo}:
+\begin{enumerate}[leftmargin=*]
+    \item Haz clic en el botón \textbf{\texttt{OPEN TERMINAL}} en la esquina superior derecha.
+    \item Explora las pestañas de tus archivos (\texttt{foods.csv}, \texttt{input.csv}, \texttt{recipes.csv}).
+    \item Busca (\texttt{Ctrl + F}), reemplaza (\texttt{Ctrl + H}) y guarda ediciones directamente (\texttt{Ctrl + S}).
+\end{enumerate}
+
+\vspace{0.5cm}
+
+% ================= SECCIÓN 7 =================
+\section{Preguntas Frecuentes (FAQ) y Casos Prácticos}
+
+\begin{tipbox}[¿Por qué usamos la escala 0.01 para consumos en gramos?]
+Las tablas nutricionales expresan los nutrientes por cada \textbf{100 gramos} de alimento.  
+Si un paciente consume \textbf{150 gramos}:
+$$\text{Porciones} = 150\,\text{g} \times 0.01 = 1.5\,\text{porciones de 100g}$$
+El motor multiplicará los nutrientes por $1.5$.
+\end{tipbox}
+
+\vspace{0.3cm}
+
+\begin{tipbox}[Diferencia entre Energía en Kilocalorías vs Kilojulios]
+\begin{itemize}
+    \item \textbf{Kilocalorías (kcal):} $4 \times \text{Proteínas} + 9 \times \text{Grasas} + 4 \times \text{Carbohidratos}$
+    \item \textbf{Kilojulios (kJ):} $17 \times \text{Proteínas} + 38 \times \text{Grasas} + 17 \times \text{Carbohidratos}$  
+    \textit{Factores convertidos por la constante $1\,\text{kcal} = 4.184\,\text{kJ}$.}
+\end{itemize}
+\end{tipbox}
+
+\vspace{0.6cm}
+
+\begin{center}
+\textcolor{gray}{\small --- Guía Oficial de Usuario WienerCalc | Desarrollado por WienerHoundStudios ---}
+\end{center}
+
+\end{document}
+

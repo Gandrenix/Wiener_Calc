@@ -31,13 +31,14 @@ export interface WienerConfig {
     amountCol: string;
     inputScale: number;
     cookMethodCol?: string;
+    nonEdibleCol?: string;
     groupByCol?: string; 
     calculations: CalculationRule[];
     cookRules: CookRule[];
     columnAliases: ColumnAlias[];
 }
 
-// 🔥 NUEVO: Escáner a prueba de balas para forzar textos a números (Maneja comas latinas y espacios)
+// Escáner a prueba de balas para forzar textos a números (Maneja comas latinas y espacios)
 const parseSafeNumber = (val: any): number | null => {
     if (typeof val === 'number') return isNaN(val) ? null : val;
     if (val === null || val === undefined || val === '') return null;
@@ -52,7 +53,6 @@ export class WienerCalcEngine {
 
     public async loadFoods(filePath: string, idCol: string): Promise<void> {
         this.foodTable.clear();
-        // Añadido bom: true y trim: true para evitar caracteres fantasma
         const parser = fs.createReadStream(filePath).pipe(
             parse({ columns: true, skip_empty_lines: true, cast: true, bom: true, trim: true })
         );
@@ -77,16 +77,20 @@ export class WienerCalcEngine {
 
         if (!firstRow) return;
 
-        if ('recipe_id' in firstRow && 'ingredient_id' in firstRow) {
+        // Detectar si es tabla diccionaria de recetas (recipe_id/id + ingredient_id/cod_b)
+        const isRecipeDict = ('recipe_id' in firstRow && 'ingredient_id' in firstRow) || 
+                             ('id' in firstRow && 'cod_b' in firstRow);
+
+        if (isRecipeDict) {
             console.log("🐕 Woof! Detected Recursive Recipe Dictionary.");
             const parser = fs.createReadStream(filePath).pipe(
                 parse({ columns: true, skip_empty_lines: true, cast: true, bom: true, trim: true })
             );
 
             for await (const row of parser) {
-                const recipeId = String(row['recipe_id']);
-                const ingredientId = String(row['ingredient_id']);
-                const amount = Number(row['amount']) || 0;
+                const recipeId = String(row['recipe_id'] ?? row['id']);
+                const ingredientId = String(row['ingredient_id'] ?? row['cod_b']);
+                const amount = parseSafeNumber(row['amount'] ?? row['cantiprep']) || 0;
 
                 if (recipeId && ingredientId) {
                     if (!this.recipeTable.has(recipeId)) {
@@ -138,10 +142,12 @@ export class WienerCalcEngine {
 
         if (this.recipeTable.has(itemId)) {
             const ingredients = this.recipeTable.get(itemId)!;
+            const recipeSum = ingredients.reduce((sum, ing) => sum + (ing.amount || 0), 0);
             let expandedResults: any[] = [];
             
             for (const ing of ingredients) {
-                const ingredientTotalAmount = ing.amount * amount; 
+                // Escalar la cantidad del ingrediente respetando la proporción en la receta (recipeSum)
+                const ingredientTotalAmount = recipeSum > 0 ? (ing.amount / recipeSum) * amount : ing.amount * amount; 
                 const subResults = this.processItem(ing.ingredientId, ingredientTotalAmount, cookMethod, config, depth + 1);
                 expandedResults = expandedResults.concat(subResults);
             }
@@ -153,18 +159,33 @@ export class WienerCalcEngine {
             return [{ _id: itemId, _calculatedAmount: amount, _error: `ID ${itemId} not found in database or recipes` }];
         }
 
-        const scaledAmount = amount * config.inputScale;
+        // Factor de parte no comestible / desecho si está configurado
+        const nonEdibleFraction = config.nonEdibleCol ? (parseSafeNumber(foodData[config.nonEdibleCol]) || 0) : 0;
+        const edibleFactor = Math.max(0, 1.0 - nonEdibleFraction);
+
+        const scaledAmount = amount * config.inputScale * edibleFactor;
         const resultRow: Record<string, any> = { _id: itemId, ...foodData, _calculatedAmount: scaledAmount };
 
-        // 🔥 CORRECCIÓN: Usamos parseSafeNumber para garantizar que nada se quede sin calcular
+        // Definir columnas de control/factores para NO multiplicar por la porción consumida
+        const factorFields = new Set<string>([
+            config.foodIdCol, config.inputIdCol, 'name', 'descripcion', 'orden', 'dia', 'tipocomi', '_id', '_error', '_calculatedAmount',
+            ...(config.groupByCol ? [config.groupByCol] : []),
+            ...(config.cookMethodCol ? [config.cookMethodCol] : []),
+            ...(config.nonEdibleCol ? [config.nonEdibleCol] : []),
+            ...config.cookRules.map(r => r.reduceField)
+        ]);
+
         for (const [key, value] of Object.entries(foodData)) {
-            if (key === config.foodIdCol || key === 'name' || key === 'descripcion') continue;
+            if (factorFields.has(key)) {
+                resultRow[key] = value;
+                continue;
+            }
 
             const numVal = parseSafeNumber(value);
             if (numVal !== null) {
                 resultRow[key] = parseFloat((numVal * scaledAmount).toFixed(4));
             } else {
-                resultRow[key] = value; // Si es texto puro, lo conserva
+                resultRow[key] = value;
             }
         }
 
@@ -173,7 +194,7 @@ export class WienerCalcEngine {
             const rule = config.cookRules.find(r => r.method.toLowerCase() === method);
             if (rule) {
                 const reductionFactor = parseSafeNumber(foodData[rule.reduceField]) || 0;
-                const retentionFactor = 1.0 - reductionFactor;
+                const retentionFactor = Math.max(0, 1.0 - reductionFactor);
                 rule.targetNutrients.forEach(nutrient => {
                     const nutrientKey = nutrient.trim();
                     if (typeof resultRow[nutrientKey] === 'number') {
@@ -191,16 +212,40 @@ export class WienerCalcEngine {
     }
 
     private evaluateFormula(expression: string, context: Record<string, any>): number {
+        if (!expression || typeof expression !== 'string') return 0;
+
         const keys = Object.keys(context).filter(k => typeof context[k] === 'number' && !isNaN(context[k]));
-        const values = keys.map(k => context[k]);
+        const sortedKeys = [...keys].sort((a, b) => b.length - a.length);
+        
+        const paramNames: string[] = [];
+        const paramValues: number[] = [];
+        const replacements: { pattern: RegExp; safeName: string }[] = [];
+
+        sortedKeys.forEach((key, idx) => {
+            const safeName = `_v${idx}_`;
+            paramNames.push(safeName);
+            paramValues.push(Number(context[key]));
+
+            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const isPureIdentifier = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key);
+            const pattern = isPureIdentifier ? new RegExp(`\\b${escapedKey}\\b`, 'g') : new RegExp(escapedKey, 'g');
+            replacements.push({ pattern, safeName });
+        });
+
+        let sanitizedExpr = expression;
+        replacements.forEach(({ pattern, safeName }) => {
+            sanitizedExpr = sanitizedExpr.replace(pattern, safeName);
+        });
+
         try {
-            const func = new Function(...keys, `return ${expression};`);
-            const result = func(...values);
+            const func = new Function(...paramNames, `return ${sanitizedExpr};`);
+            const result = func(...paramValues);
             return isNaN(result) ? 0 : Number(result.toFixed(4));
         } catch (e) {
             return 0;
         }
     }
+
 
     public async processCalculations(config: WienerConfig): Promise<any[]> {
         await this.loadFoods(config.foodsFilePath, config.foodIdCol);
@@ -214,6 +259,14 @@ export class WienerCalcEngine {
         const parser = fs.createReadStream(config.inputFilePath).pipe(
             parse({ columns: true, skip_empty_lines: true, bom: true, trim: true })
         );
+
+        const factorFields = new Set<string>([
+            config.foodIdCol, config.inputIdCol, 'name', 'descripcion', 'orden', 'dia', 'tipocomi', '_id', '_error', '_calculatedAmount',
+            ...(config.groupByCol ? [config.groupByCol] : []),
+            ...(config.cookMethodCol ? [config.cookMethodCol] : []),
+            ...(config.nonEdibleCol ? [config.nonEdibleCol] : []),
+            ...config.cookRules.map(r => r.reduceField)
+        ]);
         
         for await (const row of parser) {
             const itemId = String(row[config.inputIdCol]);
@@ -231,24 +284,31 @@ export class WienerCalcEngine {
 
             for (const row of results) {
                 const groupKey = row[config.groupByCol];
-                if (!groupKey) continue; 
+                if (groupKey === undefined || groupKey === null || groupKey === '') continue; 
 
                 if (!groupedMap.has(groupKey)) {
-                    groupedMap.set(groupKey, { [config.groupByCol]: groupKey });
+                    const baseObj: Record<string, any> = {};
+                    for (const [k, v] of Object.entries(row)) {
+                        if (factorFields.has(k) || typeof v === 'string') {
+                            baseObj[k] = v;
+                        }
+                    }
+                    baseObj[config.groupByCol] = groupKey;
+                    groupedMap.set(groupKey, baseObj);
                 }
 
                 const currentGroup = groupedMap.get(groupKey);
 
-                for (const key of Object.keys(row)) {
-                    if (key === config.groupByCol || key === config.foodIdCol || key === config.inputIdCol || key === 'name' || key === config.cookMethodCol || key === '_id' || key === '_error') {
-                        continue; 
+                for (const [key, value] of Object.entries(row)) {
+                    if (factorFields.has(key) || key === config.groupByCol) {
+                        continue;
                     }
 
-                    const numVal = parseSafeNumber(row[key]);
+                    const numVal = parseSafeNumber(value);
                     if (numVal !== null) {
                         currentGroup[key] = (currentGroup[key] || 0) + numVal;
-                    } else if (!currentGroup[key]) {
-                        currentGroup[key] = row[key]; // Guarda los textos agrupados si no existían
+                    } else if (currentGroup[key] === undefined) {
+                        currentGroup[key] = value;
                     }
                 }
             }
@@ -259,6 +319,9 @@ export class WienerCalcEngine {
                          groupObj[key] = Number(groupObj[key].toFixed(4));
                     }
                 }
+                config.calculations.forEach(calc => {
+                    groupObj[calc.outputField] = this.evaluateFormula(calc.expression, groupObj);
+                });
                 return groupObj;
             });
             console.log(`Squash complete! Reduced to ${results.length} grouped rows.`);
