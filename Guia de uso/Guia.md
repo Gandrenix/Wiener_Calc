@@ -62,11 +62,15 @@ Aplica porcentajes reales de retención/pérdida nutricional según el método d
 Soporta factores de desecho o parte no comestible (cáscaras, semillas, huesos, piel), calculando automáticamente el peso neto comestible real ingerido.
 
 ### 📊 6. Agrupación y Agregación Multinivel
-Agrupa y suma los resultados automáticamente por:
+Agrupa y suma los resultados por **una o varias** columnas a la vez:
 - Paciente / Sujeto de estudio (`id` / `person_id`)
 - Día de encuesta o seguimiento (`dia`)
 - Tipo de comida (`desayuno`, `almuerzo`, `cena`, `snack`)
 - Grupo poblacional, cohorte o municipio.
+- O combinaciones: **sujeto + día**, **sujeto + tiempo de comida**, etc.
+
+### 🔍 7. Trazabilidad: nada se descarta en silencio
+Cada ejecución produce un **informe** con los avisos, las estadísticas y la lista de códigos que no se encontraron. Si un registro no entró en los totales, sabrás cuál, por qué y cuánta cantidad representaba. El informe se puede exportar en `.txt` para archivarlo junto a los resultados.
 
 ---
 
@@ -104,6 +108,23 @@ graph LR
 2. **Cantidades Consumidas (Entrada):** Haz clic en la segunda caja para cargar la encuesta o diario de consumo (ej. `ejemingre.csv` u `input.csv`).
 3. **Tabla de Recetas (Opcional):** Si tu estudio incluye preparaciones complejas, haz clic en la tercera caja para seleccionarla (ej. `trecetas.csv` o `ejemreceta.csv`).
 
+Al cargar cada archivo, debajo de la caja aparece un resumen de lo que WienerCalc🐾 detectó: **número de filas, número de columnas y el delimitador**. Conviene mirarlo: si el delimitador no es el que esperabas, probablemente el archivo se guardó con otra configuración regional.
+
+#### ❌ Quitar un archivo
+Cada caja con un archivo cargado muestra una **×** en su esquina superior derecha. Al pulsarla se retira el archivo, se limpian las selecciones que dependían de él (columnas, alias, reglas de cocción) y se descartan los resultados anteriores, porque ya no corresponden a la configuración actual. También puedes simplemente hacer clic en la caja para reemplazar el archivo por otro.
+
+#### 🍲 Modo de la Tabla de Recetas
+Al cargar el tercer archivo aparece un selector con tres opciones. **Elegir bien esto es importante:** dos archivos con la misma pinta pueden significar cosas distintas.
+
+- **Preparaciones precalculadas (fusionar):** cada fila es un plato ya calculado (con sus nutrientes por 100 g) que se incorpora a la tabla de alimentos. Es el caso de `trecetas.csv`.
+- **Diccionario de ingredientes (descomponer):** cada fila es **un ingrediente** de una receta. WienerCalc🐾 descompone la receta y escala cada ingrediente en proporción a la cantidad consumida. En este modo debes indicar las tres columnas: receta, ingrediente y cantidad.
+- **Detectar automáticamente:** WienerCalc🐾 decide y **te dice qué eligió** en el informe de la ejecución. Si el archivo es ambiguo (por ejemplo, tiene una columna `id` que puede ser el sujeto o la receta), lo advierte en vez de asumir.
+
+#### ⚠️ Si un código existe en AMBAS tablas
+Cuando un mismo código aparece en la tabla de alimentos y en la de preparaciones, hay que decidir cuál manda. WienerCalc🐾 te lo pregunta y **te informa cuántos códigos colisionaron**.
+
+Esta elección **cambia tus resultados**: en el dataset `tpaisa` + `trecetas` colisionan 52 códigos, y la diferencia en grasa total del sujeto de prueba es del 123 %. Ninguna de las dos opciones es «la correcta» en abstracto: depende de si en tu estudio esos códigos representan el alimento crudo o la preparación. Lo que sí es incorrecto es resolverlo sin saberlo.
+
 ---
 
 ### Pestaña 2: Mapeo de Campos, Agrupación y Alias
@@ -113,11 +134,16 @@ En esta pestaña defines la estructura de tus archivos:
 1. **Columna ID (Tabla Alimentos):** Selecciona el encabezado que identifica el código de alimento (ej. `codalim` o `food_id`).
 2. **Columna ID (Consumo Entrada):** Selecciona el código del alimento consumido en la tabla de ingesta (ej. `codalim` o `food_id`).
 3. **Nombre de Columna de Cantidad:** Selecciona la columna de peso o cantidad (ej. `cantidad` o `amount_grams`).
-4. **Escala de Entrada (Multiplicador):** 
+4. **Escala de Entrada (Multiplicador):**
    - Escribe **`0.01`** si tus datos de consumo están en **gramos** (convierte los gramos a porciones de 100g de la tabla nutricional: $250\,\text{g} \times 0.01 = 2.5\,\text{porciones}$).
    - Escribe **`1.0`** si tus datos de consumo ya están expresados directamente en porciones de 100g.
+   - El campo se pone rojo si el valor no es un número mayor que 0.
 5. **Columna de Método de Cocción (Opcional):** Selecciona la columna que indica el tipo de cocción (ej. `tipocomi` o `prep_method`).
-6. **Agrupar Resultados Por (Opcional):** Selecciona la columna del paciente (ej. `id` o `person_id`) para que WienerCalc🐾 sume todos los consumos del sujeto y entregue **una fila resumida por persona**.
+6. **Columna de Parte No Comestible (Opcional):** Selecciona la columna con el factor de desecho (cáscaras, huesos, semillas) e indica si está expresada como **fracción (0–1)** o como **porcentaje (0–100)**. Si el valor no encaja con la unidad elegida, WienerCalc🐾 lo avisa en vez de anular los nutrientes de ese alimento.
+7. **Agrupar Resultados Por (Opcional):** Marca **una o varias** columnas. Con `id` obtienes una fila por sujeto; con `id` **y** `dia` obtienes una fila por sujeto y día, que es lo que necesitas en una encuesta de varios días.
+
+#### 🏷️ Columnas Descriptivas (nunca se suman)
+Marca aquí las columnas que son numéricas pero **no son nutrientes**: `orden`, `dia`, `tipocomi`, códigos, identificadores. Si no lo haces, al agrupar se sumarían como si fueran nutrientes. WienerCalc🐾 preselecciona automáticamente los nombres más habituales que encuentre en tus archivos, pero conviene revisarlo.
 
 #### 🔗 Alias de Columnas (Fusión Inteligente de Tablas)
 Si tu tabla de recetas o segunda base de datos utiliza nombres de columna distintos a la tabla principal, usa el botón **"+ Añadir Alias"** para emparejarlas:
@@ -146,10 +172,19 @@ Haz clic en **"+ Añadir Regla"** para definir cualquier ecuación. Puedes crear
 - **Porcentaje de Energía de Proteínas:**  
   Nombre: `pct_proteina` | Fórmula: `(proteina_g * 4 / kcal) * 100`
 
+**Validación en vivo.** Mientras escribes, WienerCalc🐾 comprueba la fórmula contra las columnas de tus archivos. Si te equivocas en un nombre, el campo se pone rojo y te sugiere la columna correcta (*«Variable no encontrada: «proteina» (¿querías decir «protein»?)»*). Una fórmula inválida **deja la celda vacía**, nunca en `0`: un cero silencioso se confunde con un dato real.
+
+**Funciones disponibles:** `min`, `max`, `abs`, `round`, `floor`, `ceil`, `sqrt`, `pow`, `ln`, `log`, `exp`, `if`.
+Operadores: `+ - * / % ^`, paréntesis, comparaciones (`< > <= >= == !=`) y `&&` / `||`.
+
+Ejemplos con funciones:
+- `round(proteina_g * 4 / kcal * 100, 1)` → porcentaje redondeado a un decimal.
+- `if(kcal > 0, grasatot_g * 9 / kcal * 100, 0)` → % de energía de grasa, evitando dividir por cero.
+
 #### 🍳 2. Reducciones y Pérdidas por Cocción
 Haz clic en **"+ Añadir Regla de Cocción"** para descontar pérdidas de nutrientes sensibles:
 - **Método:** `boil` (hervido) o `fry` (frito)
-- **Campo de Reducción:** `boil_loss` (ej. 0.40 representa un 40% de pérdida)
+- **Campo de Reducción:** `boil_loss` (se acepta tanto `0.40` como `40` para un 40 % de pérdida)
 - **Nutrientes Objetivo:** Marca los nutrientes afectados (ej. `vitaC`, `vitaB1`, `potasio_mg`).
 
 ---
@@ -157,11 +192,28 @@ Haz clic en **"+ Añadir Regla de Cocción"** para descontar pérdidas de nutrie
 ### Pestaña 4: Calcular, Vista Previa y Exportación
 
 1. Haz clic en el botón **"Ejecutar Cálculo"** (Run Calculation).
-2. El motor procesará instantáneamente la combinación de tablas, recetas, agrupaciones por paciente y reglas matemáticas.
-3. Revisa la **Vista Previa de Resultados** en pantalla (con desplazamiento horizontal para inspeccionar todas tus columnas).
-4. Exporta tu trabajo:
-   - 📊 **Exportar a Excel (.xlsx):** Genera un libro estructurado, con encabezados claros y formato limpio.
-   - 📄 **Exportar a CSV:** Descarga un archivo listo para importar en programas estadísticos como SPSS, R, Stata, SAS o Python.
+2. El motor procesará la combinación de tablas, recetas, agrupaciones y reglas matemáticas.
+3. Revisa los cinco indicadores: **alimentos cargados, recetas, registros leídos, filas de resultado y colisiones de códigos**. Si alguno no cuadra con lo que esperas, ahí está el problema.
+4. Lee el **Informe de la ejecución**. Es la parte más importante de esta pestaña:
+   - 🔴 **Errores** — algo impidió calcular una regla.
+   - 🟡 **Advertencias** — colisiones de códigos, filas mal formadas, cantidades vacías, columnas ausentes en una fórmula.
+   - 🔵 **Información** — qué modo de receta se usó, cuántas preparaciones se incorporaron.
+   Si todo fue bien, verás en verde *«Sin advertencias: todos los registros se procesaron.»*
+5. Revisa el panel **«Códigos que no existen en la tabla de alimentos»**, si aparece. Lista cada código ausente, en cuántos registros aparecía y qué cantidad total quedó fuera del cálculo. **Esos registros no están sumados en tus totales.**
+6. Revisa la **Vista Previa de Resultados** (con desplazamiento horizontal).
+7. Exporta tu trabajo:
+   - 📊 **Excel (.xlsx):** libro estructurado con todas las columnas. *(Sólo en la aplicación de escritorio; la versión web exporta CSV.)*
+   - 📄 **CSV:** listo para SPSS, R, Stata, SAS o Python. Incluye BOM para que Excel respete los acentos.
+   - 📝 **Informe (.txt):** la configuración usada, las estadísticas, todos los avisos y la lista completa de códigos no encontrados. **Guárdalo junto a tus resultados:** documenta cómo se obtuvieron.
+
+#### 📐 Columnas que añade WienerCalc🐾 a los resultados
+
+| Columna | Significado |
+|---|---|
+| `_registros` | Cuántos registros de consumo se agregaron en esa fila |
+| `_cantidad_total` | Suma de las cantidades consumidas, en las unidades de tu archivo |
+| `_porcion` | Suma de las porciones aplicadas (cantidad × escala × parte comestible) |
+| `primer_<col>` | Valor de una columna descriptiva que **no es constante** dentro del grupo. Se renombra así para dejar claro que describe al primer registro, no a todo el grupo |
 
 ---
 
@@ -169,8 +221,10 @@ Haz clic en **"+ Añadir Regla de Cocción"** para descontar pérdidas de nutrie
 
 Para investigaciones largas o clínicas que atienden pacientes a diario, no necesitas volver a configurar columnas ni escribir fórmulas cada vez:
 
-- 💾 **Guardar Perfil (Save Config):** En la barra lateral, haz clic en este botón para descargar un archivo `.json` con toda tu configuración (mapeos, alias, reglas y factores de cocción).
-- 📁 **Cargar Perfil (Load Config):** Al abrir WienerCalc🐾 en cualquier momento, haz clic en Cargar Perfil y selecciona tu archivo `.json`. Toda tu configuración se restaurará en un milisegundo.
+- 💾 **Guardar Perfil (Save Config):** En la barra lateral, haz clic en este botón para descargar un archivo `.json` con toda tu configuración (mapeos, alias, reglas, factores de cocción, agrupaciones, modo de receta y política de colisión).
+- 📁 **Cargar Perfil (Load Config):** Al abrir WienerCalc🐾 en cualquier momento, haz clic en Cargar Perfil y selecciona tu archivo `.json`. Toda tu configuración se restaurará al instante.
+
+Los perfiles guardados con versiones anteriores se **migran automáticamente** al cargarlos (por ejemplo, la antigua agrupación por una sola columna pasa a la nueva lista de columnas).
 
 ---
 
@@ -197,6 +251,27 @@ Las bases de datos nutricionales reportan los nutrientes contenidos en **100 gra
 Si un paciente consume **150 gramos** de un alimento:
 $$\text{Factor de Porción} = 150\,\text{g} \times 0.01 = 1.5\,\text{porciones}$$
 El motor multiplicará los nutrientes por $1.5$. Si tus registros están en kilogramos, la escala sería `10`. Si están en porciones de 100g directas, la escala es `1.0`.
+
+### ❓ ¿Qué formatos de CSV acepta?
+Todos los habituales, y los detecta solos:
+- **Delimitador:** coma, punto y coma, tabulador o barra vertical.
+- **BOM UTF-8:** el «CSV UTF-8 (delimitado por comas)» que exporta Excel funciona sin más.
+- **Campos entrecomillados:** un nombre como `"Arroz, blanco, cocido"` no rompe la fila.
+- **Coma decimal:** `31,5` se interpreta como 31.5. También `1.234,56` y `1,234.56`.
+- **Finales de línea:** Windows (CRLF), Unix (LF) o Mac clásico (CR).
+- **Códigos:** se toleran los `101.0` que genera Excel al tratar los códigos como números, y los ceros a la izquierda se respetan.
+
+Si dos columnas tienen el mismo nombre, la segunda se renombra (`a`, `a_2`) en vez de sobrescribir a la primera en silencio.
+
+### ❓ ¿Qué pasa si un código de mi encuesta no está en la tabla de alimentos?
+Ese registro **no se suma** (no hay datos con los que sumarlo) y WienerCalc🐾 te lo dice explícitamente: aparece en el panel «Códigos que no existen en la tabla de alimentos» con el número de registros y la cantidad total afectada, y queda registrado en el informe `.txt`. Nunca desaparece en silencio.
+
+### ❓ ¿Los resultados de la versión web y la de escritorio son los mismos?
+**Sí, exactamente los mismos.** Ambas usan el mismo motor de cálculo; lo único que cambia es cómo se leen los archivos (el explorador del sistema frente al selector del navegador). La suite de pruebas del proyecto verifica esta igualdad en cada cambio.
+
+Diferencias que sí existen, y sólo de entrada/salida:
+- La versión web exporta **CSV** en vez de `.xlsx`.
+- En la web los archivos viven en la memoria de la pestaña: si recargas la página, hay que volver a seleccionarlos, y las ediciones del terminal integrado no se escriben en tu disco.
 
 ### ❓ ¿Cómo calcular el aporte energético en Kilocalorías vs Kilojulios?
 - **Para Kilocalorías ($\text{kcal}$):**  

@@ -1,202 +1,261 @@
 import { app, BrowserWindow, ipcMain, dialog, IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
-import { executeFoodCalc } from './engine/wienerEngine' 
 import * as fs from 'fs'
-import { parse } from 'csv-parse'
 import * as xlsx from 'xlsx'
+
+import { runEngine, EngineConfigError, type WienerConfig } from '../shared/engine.ts'
+import { parseCsvHeaders, parseCsv, toCsv, uniqueValues } from '../shared/csv.ts'
+
+/* ------------------------------------------------------------------ */
+/* Ventana                                                             */
+/* ------------------------------------------------------------------ */
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
-    width: 1024,
-    height: 768,
+    width: 1180,
+    height: 820,
     autoHideMenuBar: true,
-    
-    // 👇 CARGAMOS EL PNG DIRECTO DESDE LA CARPETA EMPAQUETADA 👇
     icon: join(__dirname, '../../resources/logo.png'),
-
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
-      sandbox: false 
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false
     }
   })
-  
-  mainWindow.setMenuBarVisibility(false);
-  mainWindow.setMenu(null);
 
-  mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'] || 'file://' + join(__dirname, '../renderer/index.html'))
+  mainWindow.setMenuBarVisibility(false)
+  mainWindow.setMenu(null)
+
+  mainWindow.loadURL(
+    process.env['ELECTRON_RENDERER_URL'] || 'file://' + join(__dirname, '../renderer/index.html')
+  )
 }
+
+/* ------------------------------------------------------------------ */
+/* Utilidades                                                          */
+/* ------------------------------------------------------------------ */
+
+function readText(filePath: string): string {
+  return fs.readFileSync(filePath, 'utf8')
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Ocurrió un error desconocido.'
+}
+
+/* ------------------------------------------------------------------ */
 
 app.whenReady().then(() => {
   createWindow()
 
-  // 1. Core Engine Handler
-  ipcMain.handle('calculate-food', async (event: IpcMainInvokeEvent, configData: any) => {
-    console.log("Woof! Received config from UI:", configData);
+  /* --- 1. Motor de cálculo ---------------------------------------- */
+
+  ipcMain.handle('calculate-food', async (_event: IpcMainInvokeEvent, configData: WienerConfig) => {
     try {
-      const results = await executeFoodCalc(configData);
-      return { success: true, data: results };
-    } catch (error: unknown) {
-      const errMessage = error instanceof Error ? error.message : "Unknown error occurred";
-      return { success: false, error: errMessage };
-    }
-  })
-
-  // 2. File Selector Dialog
-  ipcMain.handle('select-file', async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openFile'] })
-    return result.canceled ? null : result.filePaths[0];
-  })
-
-  // 3. Header Scanner
-  ipcMain.handle('get-csv-headers', async (event: IpcMainInvokeEvent, filePath: string) => {
-    return new Promise((resolve, reject) => {
-      const parser = fs.createReadStream(filePath).pipe(parse({ to_line: 1 }));
-      parser.on('data', (record) => resolve(record));
-      parser.on('error', (err) => reject(err.message));
-      parser.on('end', () => resolve([]));
-    });
-  })
-
-  // 4. Data Scanner for Dropdowns
-  ipcMain.handle('scan-unique-values', async (event: IpcMainInvokeEvent, filePath: string, columnName: string) => {
-    return new Promise((resolve, reject) => {
-      const uniqueValues = new Set<string>();
-      const parser = fs.createReadStream(filePath).pipe(parse({ columns: true, skip_empty_lines: true }));
-      
-      parser.on('data', (row) => {
-        const val = row[columnName];
-        if (val) uniqueValues.add(String(val).trim());
-      });
-      
-      parser.on('error', (err) => reject(err.message));
-      parser.on('end', () => resolve(Array.from(uniqueValues)));
-    });
-  })
-
-  // 5. Save as CSV
-  ipcMain.handle('save-csv', async (event: IpcMainInvokeEvent, data: any[]) => {
-    if (!data || data.length === 0) return { success: false, error: "No data to save!" };
-    const { filePath, canceled } = await dialog.showSaveDialog({
-      title: 'Export WienerCalc Results',
-      defaultPath: 'wiener_results.csv',
-      filters: [{ name: 'CSV Files', extensions: ['csv'] }]
-    });
-    if (canceled || !filePath) return { success: false, canceled: true };
-    try {
-      const headers = Object.keys(data[0]);
-      const csvRows = [];
-      csvRows.push(headers.join(','));
-      for (const row of data) {
-        const values = headers.map(header => {
-          const rawValue = row[header] !== undefined && row[header] !== null ? String(row[header]) : '';
-          const escaped = rawValue.replace(/"/g, '""');
-          return `"${escaped}"`;
-        });
-        csvRows.push(values.join(','));
+      const result = runEngine(
+        {
+          foodsText: configData.foodsFilePath ? readText(configData.foodsFilePath) : '',
+          inputText: configData.inputFilePath ? readText(configData.inputFilePath) : '',
+          recipesText: configData.recipesFilePath ? readText(configData.recipesFilePath) : undefined
+        },
+        configData
+      )
+      return {
+        success: true,
+        data: result.rows,
+        warnings: result.warnings,
+        notFound: result.notFound,
+        stats: result.stats
       }
-      fs.writeFileSync(filePath, csvRows.join('\n'), 'utf8');
-      return { success: true, filePath };
     } catch (error: unknown) {
-      const errMessage = error instanceof Error ? error.message : "Unknown error occurred";
-      return { success: false, error: errMessage };
+      const warnings = error instanceof EngineConfigError ? error.warnings : []
+      return { success: false, error: errorMessage(error), warnings }
     }
-  });
+  })
 
-// 6. HEAVY LOGGING EXCEL HANDLER
-  ipcMain.handle('save-excel', async (event: IpcMainInvokeEvent, data: any[]) => {
-    console.log("\n--- 🟢 EXCEL EXPORT STARTED ---");
-    if (!data || data.length === 0) return { success: false, error: "No data to save!" };
+  /* --- 2. Selector de archivos ------------------------------------ */
 
-    console.log(`📊 Received ${data.length} rows to export.`);
-    
+  ipcMain.handle('select-file', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile'],
+      filters: [
+        { name: 'Archivos de datos', extensions: ['csv', 'txt', 'tsv'] },
+        { name: 'Todos los archivos', extensions: ['*'] }
+      ]
+    })
+    return result.canceled ? null : result.filePaths[0]
+  })
+
+  /* --- 3. Cabeceras del CSV --------------------------------------- */
+  /* Antes se leía SIN tener en cuenta el BOM, así que la columna que      */
+  /* mostraba la interfaz («﻿food_id») no coincidía con la que veía   */
+  /* el motor («food_id») y no se cargaba ningún alimento.                */
+
+  ipcMain.handle('get-csv-headers', async (_event: IpcMainInvokeEvent, filePath: string) => {
+    try {
+      return parseCsvHeaders(readText(filePath)).headers
+    } catch {
+      return []
+    }
+  })
+
+  /** Cabeceras + delimitador detectado + nº de filas, para la interfaz. */
+  ipcMain.handle('inspect-csv', async (_event: IpcMainInvokeEvent, filePath: string) => {
+    try {
+      const text = readText(filePath)
+      const { headers, delimiter } = parseCsvHeaders(text)
+      // Sólo se cuentan filas para archivos manejables; en los enormes se estima.
+      const lineCount = text.length < 20_000_000
+        ? parseCsv(text, delimiter).rows.length
+        : text.split('\n').length - 1
+      return { success: true, headers, delimiter, rowCount: lineCount }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error), headers: [] as string[] }
+    }
+  })
+
+  /* --- 4. Valores únicos de una columna --------------------------- */
+
+  ipcMain.handle('scan-unique-values', async (_event: IpcMainInvokeEvent, filePath: string, columnName: string) => {
+    try {
+      return uniqueValues(readText(filePath), columnName)
+    } catch {
+      return []
+    }
+  })
+
+  /* --- 5. Exportar a CSV ------------------------------------------ */
+  /* Ahora usa la UNIÓN de columnas de todas las filas: antes se tomaban   */
+  /* sólo las de la primera fila y el CSV perdía columnas que el Excel sí  */
+  /* incluía.                                                             */
+
+  ipcMain.handle('save-csv', async (_event: IpcMainInvokeEvent, data: Record<string, unknown>[]) => {
+    if (!data || data.length === 0) return { success: false, error: 'No hay datos que guardar.' }
+
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: 'Export WienerCalc Results to Excel',
-      defaultPath: 'wiener_results.xlsx',
-      filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
-    });
-
-    if (canceled || !filePath) return { success: false, canceled: true };
+      title: 'Exportar resultados de WienerCalc',
+      defaultPath: 'wiener_results.csv',
+      filters: [{ name: 'Archivos CSV', extensions: ['csv'] }]
+    })
+    if (canceled || !filePath) return { success: false, canceled: true }
 
     try {
-      console.log("⚙️  Step 1: Converting JSON array to Excel...");
-      const worksheet = xlsx.utils.json_to_sheet(data);
-      
-      console.log("⚙️  Step 2: Creating new Workbook...");
-      const workbook = xlsx.utils.book_new();
-      xlsx.utils.book_append_sheet(workbook, worksheet, "WienerCalc Results");
-
-      console.log("⚙️  Step 3: Calculating column widths...");
-      const headers = Object.keys(data[0]);
-      worksheet['!cols'] = headers.map(h => ({ wch: Math.max(h.length, 12) }));
-
-      console.log(`💾 Step 4: Bypassing xlsx and writing via native Node.js fs...`);
-      const excelBuffer = xlsx.write(workbook, { bookType: 'xlsx', type: 'buffer' });
-      fs.writeFileSync(filePath, excelBuffer);
-      
-      console.log("✅ EXCEL EXPORT SUCCESSFUL!\n");
-      return { success: true, filePath };
-
-    } catch (error: any) {
-      console.log("\n❌ !!! EXCEL EXPORT CRASHED !!!");
-      console.log(error);
-      return { success: false, error: error.message };
+      // BOM para que Excel abra los acentos correctamente.
+      fs.writeFileSync(filePath, '﻿' + toCsv(data), 'utf8')
+      return { success: true, filePath }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
     }
-  });
+  })
 
-  // 7. GUARDAR PERFIL (CONFIGURACIÓN)
-  ipcMain.handle('save-config', async (event: IpcMainInvokeEvent, configData: any) => {
+  /* --- 6. Exportar a Excel ---------------------------------------- */
+
+  ipcMain.handle('save-excel', async (_event: IpcMainInvokeEvent, data: Record<string, unknown>[]) => {
+    if (!data || data.length === 0) return { success: false, error: 'No hay datos que guardar.' }
+
     const { filePath, canceled } = await dialog.showSaveDialog({
-      title: 'Guardar Perfil de WienerCalc',
+      title: 'Exportar resultados de WienerCalc a Excel',
+      defaultPath: 'wiener_results.xlsx',
+      filters: [{ name: 'Libro de Excel', extensions: ['xlsx'] }]
+    })
+    if (canceled || !filePath) return { success: false, canceled: true }
+
+    try {
+      // Unión de columnas, igual que en el CSV, para que ambos coincidan.
+      const headers: string[] = []
+      const seen = new Set<string>()
+      for (const row of data) {
+        for (const key of Object.keys(row)) {
+          if (!seen.has(key)) { seen.add(key); headers.push(key) }
+        }
+      }
+
+      const worksheet = xlsx.utils.json_to_sheet(data, { header: headers })
+      const workbook = xlsx.utils.book_new()
+      xlsx.utils.book_append_sheet(workbook, worksheet, 'WienerCalc')
+      worksheet['!cols'] = headers.map((h) => ({ wch: Math.max(h.length + 2, 12) }))
+
+      const buffer = xlsx.write(workbook, { bookType: 'xlsx', type: 'buffer' })
+      fs.writeFileSync(filePath, buffer)
+      return { success: true, filePath }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
+    }
+  })
+
+  /* --- 7. Exportar el informe de avisos --------------------------- */
+
+  ipcMain.handle('save-report', async (_event: IpcMainInvokeEvent, text: string) => {
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: 'Guardar informe de la ejecución',
+      defaultPath: 'wiener_informe.txt',
+      filters: [{ name: 'Texto', extensions: ['txt'] }]
+    })
+    if (canceled || !filePath) return { success: false, canceled: true }
+    try {
+      fs.writeFileSync(filePath, text, 'utf8')
+      return { success: true, filePath }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
+    }
+  })
+
+  /* --- 8. Perfiles ------------------------------------------------ */
+
+  ipcMain.handle('save-config', async (_event: IpcMainInvokeEvent, configData: unknown) => {
+    const { filePath, canceled } = await dialog.showSaveDialog({
+      title: 'Guardar perfil de WienerCalc',
       defaultPath: 'mi_perfil.json',
       filters: [{ name: 'Archivos JSON', extensions: ['json'] }]
-    });
-
-    if (canceled || !filePath) return { success: false, canceled: true };
-
+    })
+    if (canceled || !filePath) return { success: false, canceled: true }
     try {
-      fs.writeFileSync(filePath, JSON.stringify(configData, null, 2), 'utf8');
-      return { success: true, filePath };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+      fs.writeFileSync(filePath, JSON.stringify(configData, null, 2), 'utf8')
+      return { success: true, filePath }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
     }
-  });
+  })
 
-  // 8. CARGAR PERFIL (CONFIGURACIÓN)
   ipcMain.handle('load-config', async () => {
     const { filePaths, canceled } = await dialog.showOpenDialog({
-      title: 'Cargar Perfil de WienerCalc',
+      title: 'Cargar perfil de WienerCalc',
       properties: ['openFile'],
       filters: [{ name: 'Archivos JSON', extensions: ['json'] }]
-    });
-
-    if (canceled || filePaths.length === 0) return { success: false, canceled: true };
-
+    })
+    if (canceled || filePaths.length === 0) return { success: false, canceled: true }
     try {
-      const rawData = fs.readFileSync(filePaths[0], 'utf8');
-      const parsedData = JSON.parse(rawData);
-      return { success: true, data: parsedData };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+      return { success: true, data: JSON.parse(readText(filePaths[0])) }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
     }
-  });
+  })
 
-  // 9. LECTURA Y ESCRITURA PARA EL IDE (TERMINAL)
-  ipcMain.handle('read-file', async (event: IpcMainInvokeEvent, filePath: string) => {
+  /* --- 9. Editor CSV integrado ------------------------------------ */
+
+  ipcMain.handle('read-file', async (_event: IpcMainInvokeEvent, filePath: string) => {
     try {
-      const content = fs.readFileSync(filePath, 'utf8');
-      return { success: true, content };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+      return { success: true, content: readText(filePath) }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
     }
-  });
+  })
 
-  ipcMain.handle('write-file', async (event: IpcMainInvokeEvent, filePath: string, content: string) => {
+  ipcMain.handle('write-file', async (_event: IpcMainInvokeEvent, filePath: string, content: string) => {
     try {
-      fs.writeFileSync(filePath, content, 'utf8');
-      return { success: true };
-    } catch (error: any) {
-      return { success: false, error: error.message };
+      fs.writeFileSync(filePath, content, 'utf8')
+      return { success: true }
+    } catch (error: unknown) {
+      return { success: false, error: errorMessage(error) }
     }
-  });
+  })
 
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit()
 })

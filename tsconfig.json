@@ -11,17 +11,20 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "types": ["node"] 
+    "types": ["node"]
   },
   "include": [
+    "src/shared/**/*.ts",
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/preload/**/*.d.ts",
     "src/renderer/src/**/*.ts",
-    "src/renderer/src/**/*.tsx"
+    "src/renderer/src/**/*.tsx",
+    "test/**/*.ts"
   ]
 }
