@@ -41,6 +41,35 @@ export const ALLOWED_FUNCTIONS = Object.keys(FUNCTIONS);
 const PH_START = '\u0001';
 const PH_END = '\u0002';
 
+/**
+ * Comprueba el balance de paréntesis y da un mensaje específico y accionable.
+ *
+ * Antes, un paréntesis de más o de menos producía «Sobran símbolos al final
+ * de la fórmula», que no dice qué está mal ni por qué. Para alguien que no
+ * programa, eso es indescifrable. Aquí se detecta el caso exacto (falta
+ * cerrar / sobra un cierre) y se cuentan cuántos, antes de que el parser
+ * genérico intente siquiera analizar el resto de la expresión.
+ *
+ * Se ejecuta sobre `rest` (después de sustituir los nombres de columna por
+ * marcadores), así que los paréntesis que son parte de un nombre de columna
+ * — como en `vitaA(UI)` — ya no aparecen sueltos y no se cuentan aquí.
+ */
+function checkParenBalance(expr: string): string | null {
+  let openCount = 0;
+  for (const ch of expr) {
+    if (ch === '(') openCount++;
+    else if (ch === ')') {
+      if (openCount === 0) {
+        return 'Hay un paréntesis de cierre «)» de más: no tiene ninguna «(» abierta antes en la fórmula.';
+      }
+      openCount--;
+    }
+  }
+  if (openCount === 1) return 'Falta cerrar un paréntesis: hay una «(» que nunca se cierra con «)».';
+  if (openCount > 1) return `Faltan cerrar ${openCount} paréntesis: hay más «(» que «)» en la fórmula.`;
+  return null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Compilación                                                         */
 /* ------------------------------------------------------------------ */
@@ -88,6 +117,9 @@ export function compileFormula(expression: string, availableKeys: string[]): Com
     });
     return fail(`Variable no encontrada: ${messages.join(', ')}.`);
   }
+
+  const parenError = checkParenBalance(rest);
+  if (parenError) return fail(parenError);
 
   let tokens: Token[];
   try {

@@ -72,6 +72,11 @@ Agrupa y suma los resultados por **una o varias** columnas a la vez:
 ### 🔍 7. Trazabilidad: nada se descarta en silencio
 Cada ejecución produce un **informe** con los avisos, las estadísticas y la lista de códigos que no se encontraron. Si un registro no entró en los totales, sabrás cuál, por qué y cuánta cantidad representaba. El informe se puede exportar en `.txt` para archivarlo junto a los resultados.
 
+### 🖨️ 8. Exportación Profesional y Compatible con Cualquier Software Estadístico
+Los resultados salen listos tanto para presentar como para analizar en masa:
+- **Excel (.xlsx) con formato real:** encabezado en color con texto en negrita, bordes, filas alternadas ("cebra") para leer más fácil, ancho de columna ajustado al contenido, la fila de encabezado siempre visible al desplazarte (congelada) y un filtro automático en cada columna. Funciona igual en la aplicación de escritorio y en la versión web: los dos generan el mismo archivo `.xlsx`.
+- **CSV listo para R, Python (pandas), SPSS, Stata o SAS:** sólo se entrecomilla lo que realmente lo necesita (así pesa menos con datasets grandes), y las columnas internas de WienerCalc🐾 (como `_registros` o `_cantidad_total`) se renombran automáticamente al exportar para que R no las confunda con nombres inválidos. También protege contra "CSV injection": si algún valor de texto empezara por `=`, `+`, `-` o `@`, se neutraliza para que Excel o Sheets nunca lo interpreten como una fórmula.
+
 ---
 
 ## 3. Los 3 Archivos de Datos (Flexibilidad Total de Formato)
@@ -162,7 +167,16 @@ Si tu tabla de recetas o segunda base de datos utiliza nombres de columna distin
 Aquí puedes añadir todo el poder analítico a tu estudio:
 
 #### 🧮 1. Reglas Matemáticas Personalizadas (Fórmulas Ilimitadas)
-Haz clic en **"+ Añadir Regla"** para definir cualquier ecuación. Puedes crear cuantas reglas desees:
+Haz clic en **"+ Añadir Regla"** para definir cualquier ecuación. Puedes crear cuantas reglas desees. El editor de fórmulas está pensado para que armar una ecuación compleja no se sienta como escribir código a ciegas:
+
+- **Variables clicables:** debajo del campo de fórmula aparecen todas las columnas disponibles de tu archivo. Haz clic sobre cualquiera y se inserta **directamente en la posición del cursor** dentro de la fórmula (no hay que copiar y pegar).
+- **Paréntesis con colores por nivel ("rainbow parens"):** cada nivel de anidamiento se pinta de un color distinto, y si un paréntesis quedó sin su pareja se marca en rojo al instante. Así puedes ver de un vistazo si `((a+b)*(c-d))/(e+f)` está bien armado sin tener que contar paréntesis a mano.
+- **Autocompletado de paréntesis:** al escribir `(` se inserta automáticamente su `)` de cierre con el cursor en medio; si el cursor ya está justo antes de un `)` y vuelves a escribir `)`, el editor simplemente pasa por encima en vez de duplicarlo; y si borras con retroceso un paréntesis recién abierto que está vacío, se borra el par completo. Es el mismo comportamiento al que estás acostumbrado en editores de código.
+- **Barra de operadores:** botones para insertar `( )`, `+`, `−`, `×`, `÷`, `^` y `,` directamente en el cursor, útil si no quieres escribirlos desde el teclado.
+- **Vista previa en vivo:** debajo de la fórmula se muestra el resultado calculado **con la primera fila real** de tu tabla de alimentos ya cargada, para que confirmes que la ecuación da el número esperado antes de ejecutar el cálculo completo sobre todos tus datos.
+- **Galería de plantillas:** un panel con fórmulas nutricionales comunes ya armadas (energía Atwater en kcal y kJ, % de energía por macronutriente, densidad de nutrientes por 1000 kcal, relación sodio/potasio) que puedes insertar con un clic y ajustar a los nombres de tus columnas.
+
+Ejemplos de reglas típicas:
 - **Calorías de Grasas:**  
   Nombre: `cal_from_fat` | Fórmula: `grasatot_g * 9`
 - **Suma Total de Vitamina A:**  
@@ -172,10 +186,10 @@ Haz clic en **"+ Añadir Regla"** para definir cualquier ecuación. Puedes crear
 - **Porcentaje de Energía de Proteínas:**  
   Nombre: `pct_proteina` | Fórmula: `(proteina_g * 4 / kcal) * 100`
 
-**Validación en vivo.** Mientras escribes, WienerCalc🐾 comprueba la fórmula contra las columnas de tus archivos. Si te equivocas en un nombre, el campo se pone rojo y te sugiere la columna correcta (*«Variable no encontrada: «proteina» (¿querías decir «protein»?)»*). Una fórmula inválida **deja la celda vacía**, nunca en `0`: un cero silencioso se confunde con un dato real.
+**Validación en vivo.** Mientras escribes, WienerCalc🐾 comprueba la fórmula contra las columnas de tus archivos. Si te equivocas en un nombre, el campo se pone rojo y te sugiere la columna correcta (*«Variable no encontrada: «proteina» (¿querías decir «protein»?)»*). Si el problema son los paréntesis, el mensaje lo dice de forma específica (*«Falta cerrar un paréntesis»*, *«Hay un paréntesis de cierre de más»*) en vez de un genérico "error de sintaxis". Una fórmula inválida **deja la celda vacía**, nunca en `0`: un cero silencioso se confunde con un dato real.
 
 **Funciones disponibles:** `min`, `max`, `abs`, `round`, `floor`, `ceil`, `sqrt`, `pow`, `ln`, `log`, `exp`, `if`.
-Operadores: `+ - * / % ^`, paréntesis, comparaciones (`< > <= >= == !=`) y `&&` / `||`.
+Operadores: `+ - * / % ^`, paréntesis anidados sin límite de profundidad, comparaciones (`< > <= >= == !=`) y `&&` / `||`.
 
 Ejemplos con funciones:
 - `round(proteina_g * 4 / kcal * 100, 1)` → porcentaje redondeado a un decimal.
@@ -202,18 +216,22 @@ Haz clic en **"+ Añadir Regla de Cocción"** para descontar pérdidas de nutrie
 5. Revisa el panel **«Códigos que no existen en la tabla de alimentos»**, si aparece. Lista cada código ausente, en cuántos registros aparecía y qué cantidad total quedó fuera del cálculo. **Esos registros no están sumados en tus totales.**
 6. Revisa la **Vista Previa de Resultados** (con desplazamiento horizontal).
 7. Exporta tu trabajo:
-   - 📊 **Excel (.xlsx):** libro estructurado con todas las columnas. *(Sólo en la aplicación de escritorio; la versión web exporta CSV.)*
-   - 📄 **CSV:** listo para SPSS, R, Stata, SAS o Python. Incluye BOM para que Excel respete los acentos.
+   - 📊 **Excel (.xlsx):** libro con encabezado en color y negrita, bordes, filas en cebra, columnas con ancho ajustado, fila de encabezado congelada y autofiltro — **igual en la aplicación de escritorio y en la versión web**, ambas generan el mismo archivo.
+   - 📄 **CSV:** listo para SPSS, R, Stata, SAS o Python (pandas). Incluye BOM para que Excel respete los acentos al abrirlo directo, y sólo entrecomilla lo que realmente lo necesita.
    - 📝 **Informe (.txt):** la configuración usada, las estadísticas, todos los avisos y la lista completa de códigos no encontrados. **Guárdalo junto a tus resultados:** documenta cómo se obtuvieron.
+
+> 💡 Si vas a abrir el CSV con `pandas` en Python, usa `pd.read_csv(archivo, encoding='utf-8-sig')` para que el BOM no se pegue al nombre de la primera columna. Con R (`read.csv` o `readr::read_csv`) no hace falta nada especial.
 
 #### 📐 Columnas que añade WienerCalc🐾 a los resultados
 
-| Columna | Significado |
-|---|---|
-| `_registros` | Cuántos registros de consumo se agregaron en esa fila |
-| `_cantidad_total` | Suma de las cantidades consumidas, en las unidades de tu archivo |
-| `_porcion` | Suma de las porciones aplicadas (cantidad × escala × parte comestible) |
-| `primer_<col>` | Valor de una columna descriptiva que **no es constante** dentro del grupo. Se renombra así para dejar claro que describe al primer registro, no a todo el grupo |
+| Columna en pantalla | Nombre al exportar a CSV | Significado |
+|---|---|---|
+| `_registros` | `registros` | Cuántos registros de consumo se agregaron en esa fila |
+| `_cantidad_total` | `cantidad_total` | Suma de las cantidades consumidas, en las unidades de tu archivo |
+| `_porcion` | `porcion` | Suma de las porciones aplicadas (cantidad × escala × parte comestible) |
+| `primer_<col>` | `primer_<col>` (sin cambio) | Valor de una columna descriptiva que **no es constante** dentro del grupo. Se renombra así para dejar claro que describe al primer registro, no a todo el grupo |
+
+Las columnas que empiezan con `_` sólo se ven así **dentro de la aplicación** (y en el .xlsx). Al exportar a **CSV** se les quita el guion bajo inicial, porque R convierte automáticamente cualquier cabecera que empiece por `_` en algo como `X_registros` al leerla con `read.csv()` — quitarlo de antemano evita esa sorpresa. Las columnas de nutrientes que vienen de tu propia tabla de alimentos nunca se tocan, aunque tengan paréntesis o puntos en el nombre (como `vitaA(UI)`), porque renombrarlas rompería la referencia a tu tabla de composición original.
 
 ---
 
@@ -267,11 +285,16 @@ Si dos columnas tienen el mismo nombre, la segunda se renombra (`a`, `a_2`) en v
 Ese registro **no se suma** (no hay datos con los que sumarlo) y WienerCalc🐾 te lo dice explícitamente: aparece en el panel «Códigos que no existen en la tabla de alimentos» con el número de registros y la cantidad total afectada, y queda registrado en el informe `.txt`. Nunca desaparece en silencio.
 
 ### ❓ ¿Los resultados de la versión web y la de escritorio son los mismos?
-**Sí, exactamente los mismos.** Ambas usan el mismo motor de cálculo; lo único que cambia es cómo se leen los archivos (el explorador del sistema frente al selector del navegador). La suite de pruebas del proyecto verifica esta igualdad en cada cambio.
+**Sí, exactamente los mismos.** Ambas usan el mismo motor de cálculo; lo único que cambia es cómo se leen los archivos (el explorador del sistema frente al selector del navegador). La suite de pruebas del proyecto verifica esta igualdad en cada cambio, e incluye ambos formatos de exportación (CSV y Excel).
 
 Diferencias que sí existen, y sólo de entrada/salida:
-- La versión web exporta **CSV** en vez de `.xlsx`.
 - En la web los archivos viven en la memoria de la pestaña: si recargas la página, hay que volver a seleccionarlos, y las ediciones del terminal integrado no se escriben en tu disco.
+- La exportación a Excel de la web usa la compresión propia del navegador (`CompressionStream`); si alguna vez usas un navegador muy antiguo que no la soporte, verás un aviso claro en vez de un archivo dañado.
+
+### ❓ ¿Puedo abrir los resultados en R o Python (pandas) sin problemas?
+Sí. El CSV exportado sigue el formato que ambos leen por defecto: separador de coma, comillas sólo donde hacen falta, y el punto siempre como separador decimal (nunca coma), sin importar el idioma de tu computadora. Dos detalles a tener en cuenta:
+- Las columnas internas de WienerCalc🐾 (`_registros`, `_cantidad_total`, `_porcion`, `_codigo`, `_origen`) se exportan **sin el guion bajo inicial** (`registros`, `cantidad_total`...) para que R no las renombre solo.
+- El archivo incluye BOM (para que Excel muestre bien los acentos al abrirlo directo). Con `pandas.read_csv()` usa `encoding='utf-8-sig'`; con R no necesitas hacer nada especial.
 
 ### ❓ ¿Cómo calcular el aporte energético en Kilocalorías vs Kilojulios?
 - **Para Kilocalorías ($\text{kcal}$):**  

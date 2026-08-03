@@ -15,7 +15,10 @@ import { fileURLToPath } from 'url';
 import { runEngine, normalizeConfig, EngineConfigError, type WienerConfig } from '../src/shared/engine.ts';
 import { parseCsv, parseSafeNumber, toCsv } from '../src/shared/csv.ts';
 import { compileFormula, evaluateFormula, validateFormula } from '../src/shared/formula.ts';
+import { analyzeParens, parensAreBalanced } from '../src/shared/parenHighlight.ts';
 import { executeFoodCalcDetailed } from '../src/main/engine/wienerEngine.ts';
+import { crc32, colLetter, escapeXml, buildPrettyXlsx } from '../src/main/xlsxWriter.ts';
+import * as xlsxReader from 'xlsx';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (name: string): string => fs.readFileSync(path.join(HERE, name), 'utf8');
@@ -378,6 +381,39 @@ check('el error sugiere la columna correcta',
   rTypo.warnings.some((w) => w.message.includes('protein')),
   JSON.stringify(rTypo.warnings.map((w) => w.message)));
 
+// Formulas complejas: parentesis anidados, funciones, logica.
+const ctxFormulas = { protein: 31, fat: 3.6, carbs: 10, kcal: 200, 'vitaA(UI)': 150, 'vitaA(ER)': 36, 'Pro. g.': 2, 'GT. g.': 5 };
+near('parentesis simple de agrupacion', evaluateFormula('(protein + fat) * 2', ctxFormulas).value ?? NaN, (31 + 3.6) * 2);
+near('parentesis anidados varios niveles', evaluateFormula('((protein + fat) * 2 - carbs) / 2', ctxFormulas).value ?? NaN, (((31 + 3.6) * 2 - 10) / 2));
+near('funcion anidada dentro de parentesis', evaluateFormula('round((protein*4/kcal)*100, 2)', ctxFormulas).value ?? NaN, Number(((31 * 4 / 200) * 100).toFixed(2)));
+near('variable con parentesis propios + parentesis de agrupacion', evaluateFormula('(vitaA(UI) + vitaA(ER)) / 2', ctxFormulas).value ?? NaN, (150 + 36) / 2);
+near('variable con espacios y puntos dentro de parentesis', evaluateFormula('(Pro. g. * 4 + GT. g. * 9) / 10', ctxFormulas).value ?? NaN, (2 * 4 + 5 * 9) / 10);
+near('logica y comparacion combinadas', evaluateFormula('if(protein > 30 && fat < 10, 1, 0)', ctxFormulas).value ?? NaN, 1);
+near('funciones anidadas multiples', evaluateFormula('round(sqrt(protein) + pow(fat,2), 3)', ctxFormulas).value ?? NaN, Number((Math.sqrt(31) + Math.pow(3.6, 2)).toFixed(3)));
+near('formula anidada a 5 niveles', evaluateFormula('((((protein + 1) * 2) - 3) / 2) + fat', ctxFormulas).value ?? NaN, ((((31 + 1) * 2) - 3) / 2) + 3.6);
+check('parentesis sin cerrar da error legible, no NaN silencioso', (() => {
+  const r = evaluateFormula('(protein + fat', ctxFormulas);
+  return r.value === null && (r.error ?? '').includes('paréntesis');
+})());
+
+// Mensajes ESPECIFICOS de paréntesis (antes decia "sobran simbolos", sin explicar por que).
+check('falta cerrar 1 parentesis: mensaje especifico', (() => {
+  const r = evaluateFormula('((protein + fat)', ctxFormulas);
+  return r.value === null && (r.error ?? '').includes('Falta cerrar un paréntesis');
+})());
+check('faltan cerrar 2 parentesis: cuenta cuantos', (() => {
+  const r = evaluateFormula('((protein + fat', ctxFormulas);
+  return r.value === null && (r.error ?? '').includes('Faltan cerrar 2 paréntesis');
+})());
+check('sobra un cierre: mensaje especifico (no "sobran simbolos")', (() => {
+  const r = evaluateFormula('protein + fat)', ctxFormulas);
+  return r.value === null && (r.error ?? '').includes('de más') && !(r.error ?? '').includes('Sobran símbolos');
+})());
+check('parentesis anidados profundos con la variable vitaA(UI) siguen funcionando', (() => {
+  const r = evaluateFormula('((vitaA(UI) + vitaA(ER)) / 2) * 1.5', ctxFormulas);
+  return Math.abs((r.value ?? NaN) - ((150 + 36) / 2) * 1.5) < 0.01;
+})());
+
 equal('validateFormula acepta una formula correcta', validateFormula('protein * 4', ['protein']), null);
 check('validateFormula rechaza un typo', validateFormula('proteina * 4', ['protein']) !== null);
 equal('evaluador seguro: sin acceso al entorno', evaluateFormula('process.exit(1)', { protein: 1 }).value, null);
@@ -468,8 +504,37 @@ equal('paridad tambien en el caso base', JSON.stringify(desktop1.rows), JSON.str
 section('Exportacion');
 
 const mixed = [{ a: 1, b: 2 }, { a: 3, b: 4, vitaC: 9 }];
-equal('el CSV usa la union de columnas', toCsv(mixed).split('\n')[0], '"a","b","vitaC"');
-equal('las filas incompletas quedan vacias', toCsv(mixed).split('\n')[1], '"1","2",""');
+equal('el CSV usa la union de columnas', toCsv(mixed).split('\n')[0], 'a,b,vitaC');
+equal('las filas incompletas quedan vacias', toCsv(mixed).split('\n')[1], '1,2,');
+
+// Comillas MINIMAS: solo cuando el valor realmente las necesita (coma,
+// comillas o salto de linea), no siempre -- asi es como lo producen Excel,
+// R y pandas por defecto, y el archivo pesa menos con datasets grandes.
+const withComma = toCsv([{ nombre: 'Arroz, blanco', kcal: 130 }]);
+equal('solo se entrecomilla lo que trae coma', withComma.split('\n')[1], '"Arroz, blanco",130');
+equal('un numero simple no lleva comillas', withComma.split('\n')[1].split(',').pop(), '130');
+
+const withQuote = toCsv([{ nombre: 'Papa "criolla"' }]);
+equal('las comillas internas se duplican', withQuote.split('\n')[1], '"Papa ""criolla"""');
+
+// Nombres internos (con "_") se limpian SOLO al exportar, para que R no los
+// convierta en X_registros al leerlos con read.csv().
+const withInternal = toCsv([{ _registros: 3, _cantidad_total: 150, _codigo: '101', _origen: 'alimento', kcal: 90 }]);
+equal('las cabeceras internas se renombran al exportar', withInternal.split('\n')[0], 'registros,cantidad_total,codigo,origen,kcal');
+equal('los valores siguen en el mismo orden', withInternal.split('\n')[1], '3,150,101,alimento,90');
+
+// Proteccion basica contra "CSV injection": un valor de texto que empiece
+// con = + - @ se antepone con una comilla simple para que Excel/Sheets no
+// lo interprete como formula si el archivo se abre sin revisar.
+const withFormulaLike = toCsv([{ nombre: '=SUM(A1:A9)', cantidad: -5.2 }]);
+equal('texto que empieza con = se neutraliza con comilla simple', withFormulaLike.split('\n')[1], "'=SUM(A1:A9),-5.2");
+equal('un numero negativo real NO se toca', String(-5.2), '-5.2');
+
+// Si ademas trae una coma, el valor neutralizado SI queda entre comillas
+// (porque la coma lo exige), y la comilla simple sigue delante para la
+// proteccion contra formulas.
+const withFormulaAndComma = toCsv([{ nombre: '=SUM(A1,A9)' }]);
+equal('formula con coma queda entrecomillada y neutralizada', withFormulaAndComma.split('\n')[1], "\"'=SUM(A1,A9)\"");
 
 /* ================================================================== */
 /* 15. Utilidades                                                      */
@@ -480,6 +545,102 @@ section('Utilidades CSV');
 equal('parseSafeNumber con formato latino', parseSafeNumber('1.234,56'), 1234.56);
 equal('parseSafeNumber con texto', parseSafeNumber('n/d'), null);
 equal('parseCsv omite lineas vacias', parseCsv('a,b\n\n1,2\n\n').rows.length, 1);
+
+/* ================================================================== */
+/* 16. Coloreado de paréntesis del editor de fórmulas                   */
+/* ================================================================== */
+
+section('Analisis de parentesis para el editor visual');
+
+equal('balanceado simple', parensAreBalanced('(a+b)'), true);
+equal('falta cerrar -> desbalanceado', parensAreBalanced('(a+b'), false);
+equal('sobra un cierre -> desbalanceado', parensAreBalanced('a+b)'), false);
+
+const nestedSiblings = analyzeParens('((a)(b))');
+equal('externo abre en nivel 0', nestedSiblings.find((t) => t.index === 0), { index: 0, char: '(', matched: true, depth: 0 });
+equal('externo cierra en nivel 0', nestedSiblings.find((t) => t.index === 7), { index: 7, char: ')', matched: true, depth: 0 });
+equal('(a) abre en nivel 1', nestedSiblings.find((t) => t.index === 1), { index: 1, char: '(', matched: true, depth: 1 });
+equal('(b) abre en nivel 1 (hermano, no mas profundo)', nestedSiblings.find((t) => t.index === 4), { index: 4, char: '(', matched: true, depth: 1 });
+
+const deeplyNested = analyzeParens('(((x)))');
+equal('nivel 0', deeplyNested.find((t) => t.index === 0)?.depth, 0);
+equal('nivel 1', deeplyNested.find((t) => t.index === 1)?.depth, 1);
+equal('nivel 2 (el mas anidado)', deeplyNested.find((t) => t.index === 2)?.depth, 2);
+equal('cierre simetrico nivel 2', deeplyNested.find((t) => t.index === 4)?.depth, 2);
+equal('cierre simetrico nivel 0', deeplyNested.find((t) => t.index === 6)?.depth, 0);
+
+check('apertura sin cierre se marca matched=false', analyzeParens('(a+b').find((t) => t.char === '(')?.matched === false);
+check('cierre sin apertura se marca matched=false', analyzeParens('a+b)').find((t) => t.char === ')')?.matched === false);
+
+const mixedParens = analyzeParens('(a))'); // '(' en 0, ')' bien emparejado en 2, ')' suelto en 3
+check('mixto: el bien emparejado queda matched=true', mixedParens.find((t) => t.index === 2)?.matched === true);
+check('mixto: el paréntesis suelto queda matched=false', mixedParens.find((t) => t.index === 3)?.matched === false);
+
+/* ================================================================== */
+/* 17. Exportacion a Excel "bonita" (xlsxWriter)                       */
+/* ================================================================== */
+
+section('Exportacion a Excel');
+
+// CRC32 es la pieza mas facil de arruinar al construir un ZIP a mano: se
+// compara contra el vector de prueba estandar del algoritmo.
+equal('crc32 contra el vector de prueba estandar', crc32(Buffer.from('123456789')), 0xcbf43926);
+
+equal('colLetter(0) es A', colLetter(0), 'A');
+equal('colLetter(25) es Z', colLetter(25), 'Z');
+equal('colLetter(26) es AA', colLetter(26), 'AA');
+equal('colLetter(701) es ZZ', colLetter(701), 'ZZ');
+equal('colLetter(702) es AAA', colLetter(702), 'AAA');
+
+equal('escapeXml escapa & < > " \'', escapeXml('a&b<c>"d"\'e\''), 'a&amp;b&lt;c&gt;&quot;d&quot;&apos;e&apos;');
+equal('escapeXml quita caracteres de control', escapeXml('a\x01b\x1fc'), 'abc');
+equal('escapeXml conserva acentos', escapeXml('ñ á canción'), 'ñ á canción');
+
+// El archivo se vuelve a leer con la libreria `xlsx` (ya en devDependencies,
+// solo para verificar en las pruebas) para confirmar que abre sin errores y
+// que los datos -- incluyendo casos raros como & < > y el valor 0 -- llegan
+// intactos.
+const xlsxHeaders = ['id', 'nombre', 'kcal', '_registros'];
+const xlsxRows = [
+  { id: 100532, nombre: 'Sujeto A & B <raro>', kcal: 8619.4821, _registros: 127 },
+  { id: 100533, nombre: 'Sujeto Ñoño', kcal: 0, _registros: 3 }
+];
+const xlsxBuffer = await buildPrettyXlsx(xlsxRows, xlsxHeaders, { sheetName: 'Resultados' });
+const wbCheck = xlsxReader.read(xlsxBuffer, { type: 'buffer' });
+const wsCheck = wbCheck.Sheets[wbCheck.SheetNames[0]];
+const parsedXlsx = xlsxReader.utils.sheet_to_json(wsCheck, { defval: null }) as Record<string, unknown>[];
+
+equal('la hoja se llama Resultados', wbCheck.SheetNames[0], 'Resultados');
+equal('se leen las 2 filas', parsedXlsx.length, 2);
+equal('texto con & y <> se preserva', parsedXlsx[0].nombre, 'Sujeto A & B <raro>');
+equal('acentos se preservan', parsedXlsx[1].nombre, 'Sujeto Ñoño');
+equal('decimales se preservan', parsedXlsx[0].kcal, 8619.4821);
+equal('el valor 0 no se confunde con vacio', parsedXlsx[1].kcal, 0);
+equal('columna interna _registros se conserva tal cual (solo el CSV la renombra)', parsedXlsx[0]._registros, 127);
+
+const emptyBook = await buildPrettyXlsx([], ['a', 'b']);
+check('un libro sin filas no truena', xlsxReader.read(emptyBook, { type: 'buffer' }).SheetNames.length === 1);
+
+// La pieza que de verdad comparten escritorio y navegador es
+// shared/xlsxExport.ts: el escritorio le pasa zlib.deflateRawSync (via
+// xlsxWriter.ts) y el navegador le pasa CompressionStream('deflate-raw')
+// (via main.tsx). Aqui se llama DIRECTO al modulo compartido con una
+// funcion deflate equivalente a la de Node, para probar ese codigo tal cual
+// lo va a ejecutar el navegador -- no solo el envoltorio de Electron.
+{
+  const { buildPrettyXlsx: buildIsomorphic } = await import('../src/shared/xlsxExport.ts');
+  const { deflateRawSync } = await import('node:zlib');
+  const nodeStyleDeflate = (bytes: Uint8Array): Uint8Array => {
+    const out = deflateRawSync(Buffer.from(bytes));
+    return new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
+  };
+  const isoBytes = await buildIsomorphic(xlsxRows, xlsxHeaders, { sheetName: 'Resultados' }, nodeStyleDeflate);
+  const isoWb = xlsxReader.read(Buffer.from(isoBytes), { type: 'buffer' });
+  const isoParsed = xlsxReader.utils.sheet_to_json(isoWb.Sheets[isoWb.SheetNames[0]], { defval: null }) as Record<string, unknown>[];
+  equal('modulo compartido (mismo camino que usa el navegador): hoja correcta', isoWb.SheetNames[0], 'Resultados');
+  equal('modulo compartido: datos correctos', isoParsed[0].nombre, 'Sujeto A & B <raro>');
+  equal('modulo compartido: decimales correctos', isoParsed[0].kcal, 8619.4821);
+}
 
 /* ================================================================== */
 

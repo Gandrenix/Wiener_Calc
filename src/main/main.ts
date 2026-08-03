@@ -1,10 +1,10 @@
 import { app, BrowserWindow, ipcMain, dialog, IpcMainInvokeEvent } from 'electron'
 import { join } from 'path'
 import * as fs from 'fs'
-import * as xlsx from 'xlsx'
 
 import { runEngine, EngineConfigError, type WienerConfig } from '../shared/engine.ts'
-import { parseCsvHeaders, parseCsv, toCsv, uniqueValues } from '../shared/csv.ts'
+import { parseCsvHeaders, parseCsvPreview, parseCsv, toCsv, uniqueValues } from '../shared/csv.ts'
+import { buildPrettyXlsx } from './xlsxWriter.ts'
 
 /* ------------------------------------------------------------------ */
 /* Ventana                                                             */
@@ -104,12 +104,12 @@ app.whenReady().then(() => {
   ipcMain.handle('inspect-csv', async (_event: IpcMainInvokeEvent, filePath: string) => {
     try {
       const text = readText(filePath)
-      const { headers, delimiter } = parseCsvHeaders(text)
+      const { headers, delimiter, sampleRows } = parseCsvPreview(text, undefined, 1)
       // Sólo se cuentan filas para archivos manejables; en los enormes se estima.
       const lineCount = text.length < 20_000_000
         ? parseCsv(text, delimiter).rows.length
         : text.split('\n').length - 1
-      return { success: true, headers, delimiter, rowCount: lineCount }
+      return { success: true, headers, delimiter, rowCount: lineCount, sampleRow: sampleRows[0] }
     } catch (error: unknown) {
       return { success: false, error: errorMessage(error), headers: [] as string[] }
     }
@@ -171,12 +171,13 @@ app.whenReady().then(() => {
         }
       }
 
-      const worksheet = xlsx.utils.json_to_sheet(data, { header: headers })
-      const workbook = xlsx.utils.book_new()
-      xlsx.utils.book_append_sheet(workbook, worksheet, 'WienerCalc')
-      worksheet['!cols'] = headers.map((h) => ({ wch: Math.max(h.length + 2, 12) }))
-
-      const buffer = xlsx.write(workbook, { bookType: 'xlsx', type: 'buffer' })
+      // Libro "bonito": encabezado en negrita con color, bordes, franjas
+      // cebra, formato numérico por columna, fila de encabezado congelada
+      // y autofiltro. La librería `xlsx` (versión gratuita) sólo escribe
+      // datos planos -- ignora en silencio cualquier estilo que se le pida
+      // al guardar -- así que el archivo se arma directamente en formato
+      // OOXML (ver xlsxWriter.ts para el detalle y las pruebas).
+      const buffer = await buildPrettyXlsx(data, headers, { sheetName: 'WienerCalc' })
       fs.writeFileSync(filePath, buffer)
       return { success: true, filePath }
     } catch (error: unknown) {

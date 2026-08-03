@@ -13,7 +13,8 @@ import {
   normalizeConfig, COMMON_DESCRIPTIVE_COLUMNS,
   type WienerConfig, type WienerWarning, type NotFoundEntry, type EngineStats
 } from '../../shared/engine.ts';
-import { validateFormula } from '../../shared/formula.ts';
+import { validateFormula, compileFormula } from '../../shared/formula.ts';
+import { analyzeParens } from '../../shared/parenHighlight.ts';
 
 /* ================================================================== */
 /* Textos                                                              */
@@ -53,9 +54,16 @@ const uiText = {
     s2AddAlias: 'Add Alias', s2RecipeCol: 'Recipe Col.', s2FoodCol: 'Food Col.',
     s2NoAlias: 'No aliases set. Identically named columns merge automatically.',
     s3Title: '3. Calculation Rules & Cooking',
-    s3Math: 'Mathematical Rules', s3AddRule: 'Add Rule', s3Vars: 'Available variables (click to copy):',
-    s3NewField: 'New field name', s3Paste: 'Formula, e.g. protein * 4',
-    s3Funcs: 'Functions: min, max, abs, round, sqrt, pow, ln, log, exp, if',
+    s3Math: 'Mathematical Rules', s3AddRule: 'Add Rule', s3Vars: 'Available variables — click to insert at the cursor:',
+    s3InsertHint: 'Click to insert into the highlighted formula',
+    s3ParenHint: 'Wraps the selected text in parentheses, or inserts an empty pair with the cursor in the middle',
+    s3OperatorsTitle: 'Operators',
+    s3TplTitle: 'Common nutrition formulas',
+    s3TplHint: 'Click to insert a ready-made formula, then double-click a placeholder word and click your real column to replace it.',
+    s3PreviewLabel: 'Preview with your first food row',
+    s3PreviewMissing: 'missing',
+    s3NewField: 'New field name', s3Paste: 'Formula, e.g. (protein * 4 + fat * 9) / kcal * 100',
+    s3Funcs: 'Parentheses of any depth are supported. Functions: min, max, abs, round, sqrt, pow, ln, log, exp, if. Comparisons: < > <= >= == != && ||',
     s3CookRed: 'Cooking Reductions', s3AddCook: 'Add Cooking Rule',
     s3Method: 'Method', s3SelMethod: 'Select method...', s3Reduce: 'Reduction Field', s3Target: 'Target Nutrients',
     s3SelFirst: 'Select the food file first...',
@@ -101,9 +109,16 @@ const uiText = {
     s2AddAlias: 'Añadir Alias', s2RecipeCol: 'Col. Recetas', s2FoodCol: 'Col. Alimentos',
     s2NoAlias: 'No hay alias. Las columnas que se llamen igual se fusionan automáticamente.',
     s3Title: '3. Reglas de Cálculo y Cocción',
-    s3Math: 'Reglas Matemáticas', s3AddRule: 'Añadir Regla', s3Vars: 'Variables disponibles (clic para copiar):',
-    s3NewField: 'Nuevo nombre de campo', s3Paste: 'Fórmula, ej. proteina_g * 4',
-    s3Funcs: 'Funciones: min, max, abs, round, sqrt, pow, ln, log, exp, if',
+    s3Math: 'Reglas Matemáticas', s3AddRule: 'Añadir Regla', s3Vars: 'Variables disponibles — clic para insertar en el cursor:',
+    s3InsertHint: 'Clic para insertar en la fórmula resaltada',
+    s3ParenHint: 'Envuelve el texto seleccionado entre paréntesis, o inserta un par vacío con el cursor en medio',
+    s3OperatorsTitle: 'Operadores',
+    s3TplTitle: 'Fórmulas nutricionales comunes',
+    s3TplHint: 'Haz clic para insertar una fórmula lista, luego selecciona con doble clic una palabra marcador y haz clic en tu columna real para reemplazarla.',
+    s3PreviewLabel: 'Vista previa con tu primera fila de alimentos',
+    s3PreviewMissing: 'faltan',
+    s3NewField: 'Nuevo nombre de campo', s3Paste: 'Fórmula, ej. (proteina_g * 4 + grasatot_g * 9) / kcal * 100',
+    s3Funcs: 'Se admiten paréntesis de cualquier profundidad. Funciones: min, max, abs, round, sqrt, pow, ln, log, exp, if. Comparaciones: < > <= >= == != && ||',
     s3CookRed: 'Reducciones por Cocción', s3AddCook: 'Añadir Regla de Cocción',
     s3Method: 'Método', s3SelMethod: 'Seleccionar método...', s3Reduce: 'Campo de Reducción', s3Target: 'Nutrientes Objetivo',
     s3SelFirst: 'Selecciona primero el archivo de alimentos...',
@@ -136,7 +151,7 @@ const emptyConfig: WienerConfig = normalizeConfig({
   calculations: [], cookRules: [], columnAliases: []
 });
 
-interface FileMeta { headers: string[]; delimiter?: string; rowCount?: number }
+interface FileMeta { headers: string[]; delimiter?: string; rowCount?: number; sampleRow?: Record<string, string> }
 const emptyMeta: FileMeta = { headers: [] };
 
 type FileKind = 'foods' | 'input' | 'recipes';
@@ -186,7 +201,7 @@ export default function App() {
   const inspect = async (filePath: string, kind: FileKind): Promise<string[]> => {
     try {
       const info = await window.wienerApi.inspectCsv(filePath);
-      const meta: FileMeta = { headers: info.headers ?? [], delimiter: info.delimiter, rowCount: info.rowCount };
+      const meta: FileMeta = { headers: info.headers ?? [], delimiter: info.delimiter, rowCount: info.rowCount, sampleRow: info.sampleRow };
       setMeta(kind, meta);
       return meta.headers;
     } catch {
@@ -519,7 +534,7 @@ export default function App() {
             <StepRules
               config={config} setConfig={setConfig} foodHeaders={foodHeaders}
               allHeaders={allHeaders} uniqueMethods={uniqueMethods}
-              formulaErrors={formulaErrors} t={t}
+              formulaErrors={formulaErrors} foodSample={foodMeta.sampleRow} t={t} lang={lang}
             />
           )}
           {activeTab === 'calc' && (
@@ -852,8 +867,266 @@ function StepMapping({
 /* Paso 3 — Reglas                                                     */
 /* ================================================================== */
 
-function StepRules({ config, setConfig, foodHeaders, allHeaders, uniqueMethods, formulaErrors, t }: any) {
-  const addCalcRule = (): void => setConfig({ ...config, calculations: [...config.calculations, { outputField: '', expression: '' }] });
+/** Nivel de anidamiento -> color. Se repite en ciclo para fórmulas muy anidadas. */
+const PAREN_DEPTH_COLORS = ['text-blue-300', 'text-emerald-300', 'text-amber-300', 'text-pink-300', 'text-cyan-300'];
+
+/**
+ * Colorea los paréntesis por profundidad ("rainbow parens", como en los
+ * editores de código) y marca en rojo los que no tienen pareja. Responde
+ * directamente a "¿qué pasa si hay paréntesis dentro de paréntesis?": ahora
+ * se ve — cada nivel tiene su color, y un paréntesis suelto se nota al
+ * instante en rojo, antes incluso de ejecutar el cálculo.
+ */
+function renderColoredFormula(text: string): React.ReactNode[] {
+  // El análisis de anidamiento/emparejado vive en `src/shared/parenHighlight.ts`,
+  // como función pura y con pruebas propias (18/18) — aquí sólo se traduce
+  // a color. Así, si el algoritmo tuviera un error, se detecta con datos,
+  // no mirando la pantalla.
+  const parens = analyzeParens(text);
+  const byIndex = new Map(parens.map((p) => [p.index, p]));
+
+  const parts: React.ReactNode[] = [];
+  let buffer = '';
+  const flushBuffer = (): void => {
+    if (buffer) { parts.push(<span key={parts.length}>{buffer}</span>); buffer = ''; }
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const token = byIndex.get(i);
+
+    if (token && (ch === '(' || ch === ')')) {
+      flushBuffer();
+      if (!token.matched) {
+        parts.push(<span key={parts.length} className="text-red-400 font-bold bg-red-500/20 rounded-sm">{ch}</span>);
+      } else {
+        const color = PAREN_DEPTH_COLORS[token.depth % PAREN_DEPTH_COLORS.length];
+        parts.push(<span key={parts.length} className={`${color} font-bold`}>{ch}</span>);
+      }
+    } else {
+      buffer += ch;
+    }
+  }
+  flushBuffer();
+
+  return parts;
+}
+
+/**
+ * Campo de fórmula con paréntesis coloreados por profundidad, autocompletado
+ * del paréntesis de cierre y salto sobre él si ya existe (igual que en un
+ * editor de código). El texto real del <input> es invisible; lo que se ve
+ * es la capa coloreada de debajo, sincronizada carácter a carácter.
+ */
+function FormulaEditor({ value, onChange, onFocus, placeholder, hasError, inputRef }: {
+  value: string;
+  onChange: (next: string) => void;
+  onFocus: () => void;
+  placeholder: string;
+  hasError: boolean;
+  inputRef: (el: HTMLInputElement | null) => void;
+}): React.JSX.Element {
+  const overlayRef = useRef<HTMLDivElement | null>(null);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    const el = e.currentTarget;
+    const start = el.selectionStart ?? value.length;
+    const end = el.selectionEnd ?? value.length;
+
+    if (e.key === '(') {
+      e.preventDefault();
+      const selected = value.slice(start, end);
+      const next = value.slice(0, start) + '(' + selected + ')' + value.slice(end);
+      const caret = selected.length > 0 ? start + selected.length + 2 : start + 1;
+      onChange(next);
+      requestAnimationFrame(() => el.setSelectionRange(caret, caret));
+      return;
+    }
+
+    if (e.key === ')' && start === end && value[start] === ')') {
+      // Ya hay un ")" justo ahí: saltamos sobre él en vez de duplicarlo.
+      e.preventDefault();
+      requestAnimationFrame(() => el.setSelectionRange(start + 1, start + 1));
+      return;
+    }
+
+    if (e.key === 'Backspace' && start === end && start > 0 && value[start - 1] === '(' && value[start] === ')') {
+      // Borra el par vacío "()" de una sola vez.
+      e.preventDefault();
+      const next = value.slice(0, start - 1) + value.slice(start + 1);
+      onChange(next);
+      requestAnimationFrame(() => el.setSelectionRange(start - 1, start - 1));
+    }
+  };
+
+  const handleScroll = (e: React.UIEvent<HTMLInputElement>): void => {
+    if (overlayRef.current) overlayRef.current.scrollLeft = e.currentTarget.scrollLeft;
+  };
+
+  return (
+    <div className={`relative flex-1 border rounded bg-umbrella-deep transition-colors ${hasError ? 'border-red-500' : 'border-umbrella-mid focus-within:border-umbrella-bright'}`}>
+      <div ref={overlayRef} aria-hidden className="absolute inset-0 flex items-center px-2 overflow-hidden pointer-events-none whitespace-pre font-mono text-sm">
+        {value ? renderColoredFormula(value) : <span className="text-neutral-600">{placeholder}</span>}
+      </div>
+      <input
+        type="text"
+        ref={inputRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
+        onKeyDown={handleKeyDown}
+        onScroll={handleScroll}
+        spellCheck={false}
+        className={`relative w-full bg-transparent p-2 font-mono text-sm text-transparent caret-white outline-none selection:bg-umbrella-accent/40 ${hasError ? 'selection:bg-red-500/30' : ''}`}
+      />
+    </div>
+  );
+}
+
+/**
+ * Fórmulas nutricionales frecuentes, listas para insertar y ajustar.
+ * Las variables (`protein`, `fat`, `kcal`…) son marcadores: casi nunca
+ * coincidirán exactamente con las columnas del usuario, así que la fórmula
+ * insertada saldrá en rojo — es intencional. El flujo esperado es: insertar
+ * la plantilla, seleccionar el marcador con doble clic y sustituirlo por la
+ * columna real haciendo clic en la lista de variables.
+ */
+const FORMULA_TEMPLATES = [
+  { field: 'energia_kcal', expr: 'protein * 4 + fat * 9 + carbs * 4', label_es: 'Energía de Atwater (kcal)', label_en: 'Atwater energy (kcal)' },
+  { field: 'energia_kJ', expr: 'protein * 17 + fat * 38 + carbs * 17', label_es: 'Energía de Atwater (kJ)', label_en: 'Atwater energy (kJ)' },
+  { field: 'pct_grasa', expr: '(fat * 9 / kcal) * 100', label_es: '% Energía de grasa', label_en: '% Energy from fat' },
+  { field: 'pct_proteina', expr: '(protein * 4 / kcal) * 100', label_es: '% Energía de proteína', label_en: '% Energy from protein' },
+  { field: 'pct_carbohidratos', expr: '(carbs * 4 / kcal) * 100', label_es: '% Energía de carbohidratos', label_en: '% Energy from carbs' },
+  { field: 'densidad_nutriente', expr: '(nutriente / kcal) * 1000', label_es: 'Densidad de nutriente / 1000 kcal', label_en: 'Nutrient density / 1000 kcal' },
+  { field: 'relacion_na_k', expr: 'sodio_mg / potasio_mg', label_es: 'Relación sodio/potasio', label_en: 'Sodium/potassium ratio' }
+] as const;
+
+function StepRules({ config, setConfig, foodHeaders, allHeaders, uniqueMethods, formulaErrors, foodSample, t, lang }: any) {
+  // --- Insertar variables, operadores y plantillas en el cursor --------
+  //
+  // Antes, hacer clic en una variable la copiaba al portapapeles y el
+  // usuario tenía que pegarla a mano. Ahora todo (variables, operadores,
+  // paréntesis, plantillas) se inserta directamente en la posición del
+  // cursor de la fórmula que esté enfocada, o crea una regla nueva si
+  // todavía no hay ninguna. Esto no cambia el motor de fórmulas: los
+  // paréntesis, funciones y operadores ya funcionaban (ver
+  // `src/shared/formula.ts`); es una mejora de interacción.
+  const [activeFormulaIndex, setActiveFormulaIndex] = useState<number | null>(null);
+  const formulaInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const pendingCaret = useRef<{ index: number; position: number } | null>(null);
+
+  useEffect(() => {
+    const pending = pendingCaret.current;
+    if (!pending) return;
+    pendingCaret.current = null;
+    const el = formulaInputRefs.current[pending.index];
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(pending.position, pending.position);
+  }, [config.calculations]);
+
+  const addCalcRule = (): void => {
+    const rules = [...config.calculations, { outputField: '', expression: '' }];
+    const newIndex = rules.length - 1;
+    setActiveFormulaIndex(newIndex);
+    pendingCaret.current = { index: newIndex, position: 0 };
+    setConfig({ ...config, calculations: rules });
+  };
+
+  const removeCalcRule = (idx: number): void => {
+    setConfig({ ...config, calculations: config.calculations.filter((_: any, i: number) => i !== idx) });
+    setActiveFormulaIndex(null);
+  };
+
+  const useTemplate = (field: string, expr: string): void => {
+    const rules = [...config.calculations, { outputField: field, expression: expr }];
+    const newIndex = rules.length - 1;
+    setActiveFormulaIndex(newIndex);
+    pendingCaret.current = { index: newIndex, position: expr.length };
+    setConfig({ ...config, calculations: rules });
+  };
+
+  /**
+   * Núcleo compartido de inserción: dado el texto de "antes" y "después"
+   * del cursor de la fórmula activa, `build` decide qué insertar y dónde
+   * queda el cursor tras la inserción. Si no hay ninguna fórmula activa,
+   * crea una regla nueva y aplica `build('', '')` sobre ella.
+   */
+  const performInsertion = (build: (before: string, after: string) => { insertText: string; caretOffsetWithinInsert: number }): void => {
+    const rules = [...config.calculations];
+
+    if (activeFormulaIndex === null || activeFormulaIndex >= rules.length) {
+      const { insertText, caretOffsetWithinInsert } = build('', '');
+      rules.push({ outputField: '', expression: insertText });
+      const newIndex = rules.length - 1;
+      setActiveFormulaIndex(newIndex);
+      pendingCaret.current = { index: newIndex, position: caretOffsetWithinInsert };
+      setConfig({ ...config, calculations: rules });
+      return;
+    }
+
+    const idx = activeFormulaIndex;
+    const rule = rules[idx];
+    const el = formulaInputRefs.current[idx];
+    const start = el?.selectionStart ?? rule.expression.length;
+    const end = el?.selectionEnd ?? rule.expression.length;
+    const before = rule.expression.slice(0, start);
+    const after = rule.expression.slice(end);
+    const { insertText, caretOffsetWithinInsert } = build(before, after);
+
+    rules[idx] = { ...rule, expression: before + insertText + after };
+    pendingCaret.current = { index: idx, position: before.length + caretOffsetWithinInsert };
+    setConfig({ ...config, calculations: rules });
+  };
+
+  /** Inserta el nombre de una columna en el cursor de la fórmula activa. */
+  const insertVariableAtCursor = (name: string): void => {
+    performInsertion((before, after) => {
+      // Evita pegar dos identificadores sin separación (p. ej. "proteinfat"):
+      // si el carácter contiguo es alfanumérico, se antepone/añade un espacio.
+      const needsLeadingSpace = before.length > 0 && /[A-Za-zÀ-ÿ0-9_)]$/.test(before);
+      const needsTrailingSpace = after.length > 0 && /^[A-Za-zÀ-ÿ0-9_(]/.test(after);
+      const insertText = (needsLeadingSpace ? ' ' : '') + name + (needsTrailingSpace ? ' ' : '');
+      return { insertText, caretOffsetWithinInsert: insertText.length };
+    });
+  };
+
+  /** Inserta un operador con espacios propios, sin duplicar los que ya haya. */
+  const insertOperator = (symbol: string): void => {
+    performInsertion((before, after) => {
+      const leadingSpace = before === '' || /\s$/.test(before) ? '' : ' ';
+      const trailingSpace = after === '' || /^\s/.test(after) ? '' : ' ';
+      const insertText = `${leadingSpace}${symbol}${trailingSpace}`;
+      return { insertText, caretOffsetWithinInsert: insertText.length };
+    });
+  };
+
+  /** Botón "( )": envuelve la selección entre paréntesis, o inserta un par vacío con el cursor en medio. */
+  const insertParenPair = (): void => {
+    const rules = [...config.calculations];
+    if (activeFormulaIndex === null || activeFormulaIndex >= rules.length) {
+      rules.push({ outputField: '', expression: '()' });
+      const newIndex = rules.length - 1;
+      setActiveFormulaIndex(newIndex);
+      pendingCaret.current = { index: newIndex, position: 1 };
+      setConfig({ ...config, calculations: rules });
+      return;
+    }
+    const idx = activeFormulaIndex;
+    const rule = rules[idx];
+    const el = formulaInputRefs.current[idx];
+    const start = el?.selectionStart ?? rule.expression.length;
+    const end = el?.selectionEnd ?? rule.expression.length;
+    const before = rule.expression.slice(0, start);
+    const selected = rule.expression.slice(start, end);
+    const after = rule.expression.slice(end);
+
+    rules[idx] = { ...rule, expression: `${before}(${selected})${after}` };
+    const caretPos = selected.length > 0 ? before.length + selected.length + 2 : before.length + 1;
+    pendingCaret.current = { index: idx, position: caretPos };
+    setConfig({ ...config, calculations: rules });
+  };
+
   const addCookRule = (): void => setConfig({ ...config, cookRules: [...config.cookRules, { method: '', reduceField: '', targetNutrients: [] }] });
 
   return (
@@ -869,39 +1142,95 @@ function StepRules({ config, setConfig, foodHeaders, allHeaders, uniqueMethods, 
           </button>
         </div>
 
+        {/* --- Plantillas de fórmulas nutricionales comunes --- */}
+        <div className="mb-5 p-4 bg-umbrella-deep/50 border border-umbrella-mid rounded-lg">
+          <p className="text-xs text-umbrella-bright font-bold uppercase mb-1 tracking-widest">{t.s3TplTitle}</p>
+          <p className="text-[11px] text-neutral-500 font-mono mb-3">{t.s3TplHint}</p>
+          <div className="flex flex-wrap gap-2">
+            {FORMULA_TEMPLATES.map((tpl) => (
+              <button key={tpl.field} onClick={() => useTemplate(tpl.field, tpl.expr)}
+                title={tpl.expr}
+                className="px-2.5 py-1.5 bg-umbrella-dark border border-umbrella-mid/80 text-neutral-200 text-xs font-semibold rounded hover:bg-umbrella-light hover:border-umbrella-bright hover:text-umbrella-bright transition">
+                {lang === 'es' ? tpl.label_es : tpl.label_en}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {allHeaders.length > 0 && (
-          <div className="mb-5 p-4 bg-umbrella-deep/50 border border-umbrella-mid rounded-lg">
-            <p className="text-xs text-umbrella-bright font-bold uppercase mb-3 tracking-widest">{t.s3Vars}</p>
-            <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
-              {allHeaders.map((h: string) => (
-                <button key={h} onClick={() => navigator.clipboard.writeText(h)}
-                  className="px-2 py-1 bg-umbrella-dark border border-umbrella-mid text-umbrella-bright text-xs font-mono rounded hover:bg-umbrella-light hover:border-umbrella-bright transition">{h}</button>
-              ))}
+          <div className="mb-5 p-4 bg-umbrella-deep/50 border border-umbrella-mid rounded-lg space-y-3">
+            <div>
+              <p className="text-xs text-umbrella-bright font-bold uppercase mb-3 tracking-widest">{t.s3Vars}</p>
+              <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                {allHeaders.map((h: string) => (
+                  <button key={h} onClick={() => insertVariableAtCursor(h)} title={t.s3InsertHint}
+                    className="px-2 py-1 bg-umbrella-dark border border-umbrella-mid text-umbrella-bright text-xs font-mono rounded hover:bg-umbrella-light hover:border-umbrella-bright transition">{h}</button>
+                ))}
+              </div>
             </div>
-            <p className="text-[11px] text-neutral-500 font-mono mt-3">{t.s3Funcs}</p>
+            <div className="pt-3 border-t border-umbrella-mid/40">
+              <p className="text-xs text-neutral-400 font-bold uppercase mb-2 tracking-widest">{t.s3OperatorsTitle}</p>
+              <div className="flex flex-wrap gap-2">
+                <button onClick={insertParenPair} title={t.s3ParenHint}
+                  className="px-3 py-1 bg-umbrella-dark border border-umbrella-accent/60 text-umbrella-bright text-sm font-mono font-bold rounded hover:bg-umbrella-accent/20 transition">( )</button>
+                {['+', '−', '×', '÷', '^', ','].map((symbol) => {
+                  const engineSymbol = symbol === '−' ? '-' : symbol === '×' ? '*' : symbol === '÷' ? '/' : symbol;
+                  return (
+                    <button key={symbol} onClick={() => insertOperator(engineSymbol)}
+                      className="w-9 py-1 bg-umbrella-dark border border-umbrella-mid text-neutral-200 text-sm font-mono font-bold rounded hover:bg-umbrella-light hover:border-umbrella-bright hover:text-umbrella-bright transition">{symbol}</button>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="text-[11px] text-neutral-500 font-mono pt-1">{t.s3Funcs}</p>
           </div>
         )}
 
-        {config.calculations.map((calc: any, idx: number) => (
-          <div key={idx} className="glass-inner p-3 mb-3">
-            <div className="flex items-center space-x-3">
-              <input type="text" value={calc.outputField} placeholder={t.s3NewField}
-                onChange={(e) => { const c = [...config.calculations]; c[idx] = { ...c[idx], outputField: e.target.value }; setConfig({ ...config, calculations: c }); }}
-                className="p-2 border border-umbrella-mid rounded bg-umbrella-deep w-1/4 font-mono text-sm text-neutral-200 focus:outline-none focus:border-umbrella-bright" />
-              <span className="text-umbrella-accent font-bold">=</span>
-              <input type="text" value={calc.expression} placeholder={t.s3Paste}
-                onChange={(e) => { const c = [...config.calculations]; c[idx] = { ...c[idx], expression: e.target.value }; setConfig({ ...config, calculations: c }); }}
-                className={`p-2 border rounded bg-umbrella-deep flex-1 font-mono text-sm focus:outline-none ${formulaErrors[idx] ? 'border-red-500 text-red-300' : 'border-umbrella-mid text-umbrella-bright focus:border-umbrella-bright'}`} />
-              <button onClick={() => setConfig({ ...config, calculations: config.calculations.filter((_: any, i: number) => i !== idx) })}
-                className="text-neutral-500 hover:text-red-400 p-2 transition"><Trash2 size={18} /></button>
+        {config.calculations.map((calc: any, idx: number) => {
+          const preview = !formulaErrors[idx] && calc.expression?.trim() && foodSample
+            ? (() => {
+                const compiled = compileFormula(calc.expression, allHeaders);
+                if (compiled.error) return null;
+                const result = compiled.evaluate(foodSample);
+                return result.value === null ? null : result;
+              })()
+            : null;
+
+          return (
+            <div key={idx} className={`glass-inner p-3 mb-3 rounded transition-all ${activeFormulaIndex === idx ? 'ring-1 ring-umbrella-accent' : ''}`}>
+              <div className="flex items-center space-x-3">
+                <input type="text" value={calc.outputField} placeholder={t.s3NewField}
+                  onChange={(e) => { const c = [...config.calculations]; c[idx] = { ...c[idx], outputField: e.target.value }; setConfig({ ...config, calculations: c }); }}
+                  className="p-2 border border-umbrella-mid rounded bg-umbrella-deep w-1/4 font-mono text-sm text-neutral-200 focus:outline-none focus:border-umbrella-bright" />
+                <span className="text-umbrella-accent font-bold">=</span>
+                <FormulaEditor
+                  value={calc.expression}
+                  placeholder={t.s3Paste}
+                  hasError={!!formulaErrors[idx]}
+                  inputRef={(el) => { formulaInputRefs.current[idx] = el; }}
+                  onFocus={() => setActiveFormulaIndex(idx)}
+                  onChange={(next) => { const c = [...config.calculations]; c[idx] = { ...c[idx], expression: next }; setConfig({ ...config, calculations: c }); }}
+                />
+                <button onClick={() => removeCalcRule(idx)}
+                  className="text-neutral-500 hover:text-red-400 p-2 transition"><Trash2 size={18} /></button>
+              </div>
+              {formulaErrors[idx] && (
+                <p className="text-xs text-red-400 font-mono mt-2 flex items-start gap-2 pl-1">
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5" />{formulaErrors[idx]}
+                </p>
+              )}
+              {preview && (
+                <p className="text-xs font-mono mt-2 pl-1 flex items-center gap-2 text-emerald-400/90">
+                  <CheckCircle2 size={13} className="shrink-0" />
+                  {t.s3PreviewLabel}: <span className="font-bold">{preview.value}</span>
+                  {preview.missing && preview.missing.length > 0 && (
+                    <span className="text-neutral-500">({t.s3PreviewMissing}: {preview.missing.join(', ')})</span>
+                  )}
+                </p>
+              )}
             </div>
-            {formulaErrors[idx] && (
-              <p className="text-xs text-red-400 font-mono mt-2 flex items-start gap-2 pl-1">
-                <AlertTriangle size={13} className="shrink-0 mt-0.5" />{formulaErrors[idx]}
-              </p>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="glass-panel p-6 relative overflow-hidden">

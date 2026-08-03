@@ -177,6 +177,39 @@ export function parseCsvHeaders(text: string, forcedDelimiter?: Delimiter): { he
   return { headers: table.headers, delimiter };
 }
 
+/**
+ * Lee la cabecera MÁS unas pocas filas de datos, sin parsear el archivo
+ * completo. Se usa para la vista previa en vivo de las fórmulas: así el
+ * usuario ve de inmediato qué produce su fórmula sobre un caso real, sin
+ * esperar a ejecutar el cálculo completo ni pagar el costo de parsear un
+ * archivo de miles de filas sólo para mostrar la primera.
+ */
+export function parseCsvPreview(
+  text: string,
+  forcedDelimiter?: Delimiter,
+  maxDataRows = 1
+): { headers: string[]; delimiter: Delimiter; sampleRows: Record<string, string>[] } {
+  const clean = stripBom(text ?? '');
+  const delimiter = forcedDelimiter ?? detectDelimiter(clean);
+
+  let end = 0;
+  let inQuotes = false;
+  let linesSeen = 0;
+  for (; end < clean.length; end++) {
+    const ch = clean[end];
+    if (ch === '"') {
+      if (inQuotes && clean[end + 1] === '"') { end++; continue; }
+      inQuotes = !inQuotes;
+    } else if (!inQuotes && ch === '\n') {
+      linesSeen++;
+      if (linesSeen > maxDataRows) break; // ya tenemos cabecera + maxDataRows líneas
+    }
+  }
+
+  const table = parseCsv(clean.slice(0, end), delimiter);
+  return { headers: table.headers, delimiter, sampleRows: table.rows.slice(0, maxDataRows) };
+}
+
 /** Evita que dos columnas con el mismo nombre se pisen silenciosamente. */
 function dedupeHeaders(headers: string[]): string[] {
   const seen = new Map<string, number>();
@@ -234,6 +267,61 @@ export function parseSafeNumber(val: unknown): number | null {
   return Number.isFinite(num) ? num : null;
 }
 
+/**
+ * Nombres internos de WienerCalc (marcados con "_" para no chocar con
+ * columnas reales del usuario) que se limpian SOLO al exportar. R convierte
+ * automáticamente cualquier cabecera con "_" al principio (p. ej.
+ * `_registros`) en `X_registros` al leerla con `read.csv()`, porque un
+ * nombre no puede empezar por guion bajo sin comillas invertidas. Cambiar el
+ * nombre aquí, en el momento de escribir el archivo, evita esa sorpresa sin
+ * tocar en absoluto la lógica interna del motor (que sigue usando `_registros`
+ * como siempre).
+ */
+const EXPORT_HEADER_RENAMES: Record<string, string> = {
+  _codigo: 'codigo',
+  _origen: 'origen',
+  _porcion: 'porcion',
+  _cantidad_total: 'cantidad_total',
+  _registros: 'registros',
+  _error: 'nota_error'
+};
+
+/**
+ * Calcula, para un conjunto de cabeceras, el nombre "limpio" que se usará al
+ * exportar: aplica los renombres conocidos y, si de todas formas queda algo
+ * que empieza por "_", le quita el guion; en el caso (raro) de que el
+ * resultado choque con otra cabecera ya usada, se deja el nombre original en
+ * vez de arriesgarse a mezclar dos columnas distintas.
+ */
+export function computeExportHeaders(headers: string[]): string[] {
+  const used = new Set(headers);
+  return headers.map((h) => {
+    let candidate = EXPORT_HEADER_RENAMES[h] ?? (h.startsWith('_') ? h.slice(1) : h);
+    if (candidate !== h && (used.has(candidate) || candidate === '')) candidate = h;
+    used.add(candidate);
+    return candidate;
+  });
+}
+
+/**
+ * Escapa un valor para CSV usando comillas SÓLO cuando hacen falta (si el
+ * texto trae el separador, comillas, salto de línea o retorno de carro) en
+ * vez de entrecomillar todo siempre. Es el estilo que producen Excel, R y
+ * pandas por defecto, y mantiene los archivos grandes más livianos.
+ *
+ * También antepone una comilla simple a un texto que empiece con
+ * `= + - @` (protección estándar contra "CSV injection": esos caracteres
+ * hacen que Excel/Sheets interpreten la celda como fórmula si el archivo se
+ * abre sin revisar antes).
+ */
+function escapeCsvValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  let raw = typeof value === 'number' ? String(value) : String(value);
+  if (typeof value !== 'number' && /^[=+\-@]/.test(raw)) raw = `'${raw}`;
+  const needsQuotes = /[",\n\r]/.test(raw);
+  return needsQuotes ? `"${raw.replace(/"/g, '""')}"` : raw;
+}
+
 /** Serializa a CSV usando la UNIÓN de claves de todas las filas. */
 export function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows || rows.length === 0) return '';
@@ -245,14 +333,10 @@ export function toCsv(rows: Record<string, unknown>[]): string {
       if (!seen.has(key)) { seen.add(key); headers.push(key); }
     }
   }
+  const exportHeaders = computeExportHeaders(headers);
 
-  const escape = (value: unknown): string => {
-    const raw = value === null || value === undefined ? '' : String(value);
-    return `"${raw.replace(/"/g, '""')}"`;
-  };
-
-  const lines = [headers.map(escape).join(',')];
-  for (const row of rows) lines.push(headers.map((h) => escape(row[h])).join(','));
+  const lines = [exportHeaders.map(escapeCsvValue).join(',')];
+  for (const row of rows) lines.push(headers.map((h) => escapeCsvValue(row[h])).join(','));
   return lines.join('\n');
 }
 

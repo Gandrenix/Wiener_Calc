@@ -1,0 +1,7 @@
+\contentsline {section}{\numberline {1}Introducción y Filosofía del Software}{1}{section.1}%
+\contentsline {section}{\numberline {2}Alcance Real y Capacidades del Sistema}{2}{section.2}%
+\contentsline {section}{\numberline {3}Los 3 Archivos de Datos (Flexibilidad de Formato)}{3}{section.3}%
+\contentsline {section}{\numberline {4}Guía Paso a Paso por Pestañas}{4}{section.4}%
+\contentsline {section}{\numberline {5}Gestión de Perfiles Reutilizables (.json)}{8}{section.5}%
+\contentsline {section}{\numberline {6}Editor de CSV / Terminal Integrado}{9}{section.6}%
+\contentsline {section}{\numberline {7}Preguntas Frecuentes (FAQ) y Casos Prácticos}{9}{section.7}%

@@ -25,6 +25,8 @@ export interface CsvInspection {
   headers: string[];
   delimiter?: string;
   rowCount?: number;
+  /** Primera fila de datos, para la vista previa en vivo de las fórmulas. */
+  sampleRow?: Record<string, string>;
   error?: string;
 }
 

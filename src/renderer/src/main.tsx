@@ -5,7 +5,8 @@ import App from './App'
 import './styles.scss'
 
 import { runEngine, EngineConfigError, type WienerConfig } from '../../shared/engine.ts'
-import { parseCsvHeaders, parseCsv, toCsv, uniqueValues } from '../../shared/csv.ts'
+import { parseCsvHeaders, parseCsvPreview, parseCsv, toCsv, uniqueValues } from '../../shared/csv.ts'
+import { buildPrettyXlsx, type DeflateFn } from '../../shared/xlsxExport.ts'
 import type { WienerApi } from '../../shared/api.ts'
 
 /**
@@ -49,6 +50,54 @@ function pickFile(accept: string): Promise<File | null> {
   })
 }
 
+/**
+ * Compresión "deflate" para el .xlsx, usando la Compression Streams API del
+ * navegador (soportada en todos los navegadores modernos desde mediados de
+ * 2023, incluido el Chromium que trae Electron). Es el equivalente en el
+ * navegador de `zlib.deflateRawSync` en el escritorio: mismo formato de
+ * bytes, así que el mismo `buildPrettyXlsx` de `shared/xlsxExport.ts`
+ * funciona en los dos casos sin cambiar una línea de la lógica del archivo.
+ */
+// TypeScript 5.7+ hizo genéricos los TypedArray (Uint8Array<ArrayBuffer> vs.
+// Uint8Array<ArrayBufferLike>); las firmas de `@types/node` para Uint8Array
+// son laxas (ArrayBufferLike, por si acaso viene de un SharedArrayBuffer)
+// pero las APIs del navegador (Blob, CompressionStream) piden el tipo
+// concreto. En este archivo los bytes SIEMPRE vienen de un ArrayBuffer
+// normal, así que se afirma el tipo en este único punto de conversión.
+function asBufferBacked(view: Uint8Array): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(view) as Uint8Array<ArrayBuffer>
+}
+
+const browserDeflateRaw: DeflateFn = async (data: Uint8Array): Promise<Uint8Array> => {
+  const stream = new CompressionStream('deflate-raw')
+  const writer = stream.writable.getWriter()
+  writer.write(asBufferBacked(data))
+  writer.close()
+  const chunks: Uint8Array[] = []
+  const reader = stream.readable.getReader()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(value)
+  }
+  let total = 0
+  for (const c of chunks) total += c.length
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) { out.set(c, offset); offset += c.length }
+  return out
+}
+
+function downloadBytes(bytes: Uint8Array, fileName: string, mime: string): void {
+  const blob = new Blob([asBufferBacked(bytes)], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 function readAsText(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
@@ -82,8 +131,14 @@ const browserApi: WienerApi = {
   inspectCsv: async (filePath: string) => {
     const cached = fileCache.get(filePath)
     if (!cached) return { success: false, headers: [], error: 'El archivo ya no está en memoria.' }
-    const { headers, delimiter } = parseCsvHeaders(cached.content)
-    return { success: true, headers, delimiter, rowCount: parseCsv(cached.content, delimiter).rows.length }
+    const { headers, delimiter, sampleRows } = parseCsvPreview(cached.content, undefined, 1)
+    return {
+      success: true,
+      headers,
+      delimiter,
+      rowCount: parseCsv(cached.content, delimiter).rows.length,
+      sampleRow: sampleRows[0]
+    }
   },
 
   scanUniqueValues: async (filePath: string, columnName: string) => {
@@ -135,16 +190,34 @@ const browserApi: WienerApi = {
   },
 
   saveExcel: async (data: unknown[]) => {
-    // En el navegador no se genera .xlsx: se avisa en vez de descargar un CSV
-    // con nombre engañoso, que era lo que hacía la versión anterior.
     if (!data || data.length === 0) return { success: false, error: 'No hay datos que guardar.' }
-    download('﻿' + toCsv(data as Record<string, unknown>[]), 'wiener_results.csv', 'text/csv;charset=utf-8')
-    return {
-      success: true,
-      filePath: 'wiener_results.csv',
-      error:
-        'La versión web exporta CSV (se abre directamente en Excel). ' +
-        'Para un .xlsx nativo usa la aplicación de escritorio.'
+    const rows = data as Record<string, unknown>[]
+
+    // Mismo libro "bonito" (encabezado en color, bordes, cebra, autofiltro,
+    // fila congelada) que en la versión de escritorio: la construcción del
+    // archivo vive en shared/xlsxExport.ts y aquí sólo cambia cómo se
+    // comprime (Compression Streams del navegador en vez de zlib de Node).
+    const headers: string[] = []
+    const seen = new Set<string>()
+    for (const row of rows) {
+      for (const key of Object.keys(row)) {
+        if (!seen.has(key)) { seen.add(key); headers.push(key) }
+      }
+    }
+
+    try {
+      const bytes = await buildPrettyXlsx(rows, headers, { sheetName: 'WienerCalc' }, browserDeflateRaw)
+      downloadBytes(
+        bytes,
+        'wiener_results.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      )
+      return { success: true, filePath: 'wiener_results.xlsx' }
+    } catch (error: unknown) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'No se pudo generar el archivo de Excel.'
+      }
     }
   },
 
